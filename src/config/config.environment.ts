@@ -90,7 +90,7 @@ export class EnvironmentConfig {
           'Authorization',
           'Cookie',
           'Set-Cookie',
-          'mode', // Thêm header mode
+          'mode',
           'credentials',
           'access-control-allow-origin',
           'access-control-allow-headers',
@@ -104,11 +104,7 @@ export class EnvironmentConfig {
 
     // Development configuration - more permissive
     return {
-      origin: [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'http://localhost:3001', // Cho phép port khác nếu cần
-      ],
+      origin: true, // Allow all origins in development
       credentials: true,
       allowedHeaders: [
         'Origin',
@@ -118,7 +114,7 @@ export class EnvironmentConfig {
         'Authorization',
         'Cookie',
         'Set-Cookie',
-        'mode', // Thêm header mode
+        'mode',
         'credentials',
         'access-control-allow-origin',
         'access-control-allow-headers',

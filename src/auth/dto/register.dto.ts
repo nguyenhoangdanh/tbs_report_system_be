@@ -6,8 +6,17 @@ import {
   IsUUID,
   MinLength,
   Length,
+  IsEnum,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+
+export enum UserRole {
+  SUPERADMIN = 'SUPERADMIN',
+  OFFICE_MANAGER = 'OFFICE_MANAGER',
+  OFFICE_ADMIN = 'OFFICE_ADMIN',
+  ADMIN = 'ADMIN',
+  USER = 'USER',
+}
 
 export class RegisterDto {
   @ApiProperty({
@@ -78,4 +87,13 @@ export class RegisterDto {
   @IsUUID()
   @IsNotEmpty()
   officeId: string;
+
+  @ApiProperty({
+    example: 'User role',
+    description: 'User role',
+    required: false,
+    default: 'USER',
+  })
+  @IsEnum(UserRole)
+  role: UserRole = UserRole.USER;
 }

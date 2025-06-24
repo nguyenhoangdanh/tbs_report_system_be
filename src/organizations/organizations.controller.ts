@@ -1,23 +1,24 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { OrganizationsService } from './organizations.service';
 import { Public } from '../common/decorators/public.decorator';
+import { OrganizationsService } from './organizations.service';
 
-@ApiTags('organizations')
+@ApiTags('Organizations')
 @Controller('organizations')
-@Public() // Make all endpoints in this controller public
 export class OrganizationsController {
-  constructor(private organizationsService: OrganizationsService) {}
+  constructor(private readonly organizationsService: OrganizationsService) {}
 
   @Get('offices')
-  @ApiOperation({ summary: 'Get all offices (public)' })
+  @Public()
+  @ApiOperation({ summary: 'Get all offices' })
   @ApiResponse({ status: 200, description: 'Offices retrieved successfully' })
   async getOffices() {
     return this.organizationsService.getAllOffices();
   }
 
   @Get('departments')
-  @ApiOperation({ summary: 'Get all departments (public)' })
+  @Public()
+  @ApiOperation({ summary: 'Get all departments' })
   @ApiResponse({
     status: 200,
     description: 'Departments retrieved successfully',
@@ -27,14 +28,16 @@ export class OrganizationsController {
   }
 
   @Get('positions')
-  @ApiOperation({ summary: 'Get all positions (public)' })
+  @Public()
+  @ApiOperation({ summary: 'Get all positions' })
   @ApiResponse({ status: 200, description: 'Positions retrieved successfully' })
   async getPositions() {
     return this.organizationsService.getAllPositions();
   }
 
   @Get('job-positions')
-  @ApiOperation({ summary: 'Get all job positions (public)' })
+  @Public()
+  @ApiOperation({ summary: 'Get all job positions' })
   @ApiResponse({
     status: 200,
     description: 'Job positions retrieved successfully',

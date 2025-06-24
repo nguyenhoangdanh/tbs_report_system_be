@@ -24,7 +24,8 @@
     "db:status": "prisma migrate status",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "import:users": "ts-node ./prisma/import-users-from-excel.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",
@@ -45,7 +46,8 @@
     "passport-local": "^1.0.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",

@@ -1,5 +1,7 @@
 import { PrismaClient, Role, OfficeType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import * as XLSX from 'xlsx';
+import * as path from 'path';
 
 const prisma = new PrismaClient();
 
@@ -18,337 +20,218 @@ async function main() {
   // Hash password for all users
   const hashedPassword = await bcrypt.hash('123456', 10);
 
-  // 1. Create Offices
-  const headOffice = await prisma.office.create({
-    data: {
-      name: 'Văn phòng điều hành tổng',
-      type: OfficeType.HEAD_OFFICE,
-      description: 'Văn phòng chính của công ty',
-    },
-  });
+  // 1. Read Excel and collect unique offices, departments, positions, job positions
+  const excelPath = path.join(__dirname, 'users.xlsx');
+  const workbook = XLSX.readFile(excelPath);
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-  const factory1 = await prisma.office.create({
-    data: {
-      name: 'Nhà máy sản xuất 1',
-      type: OfficeType.FACTORY_OFFICE,
-      description: 'Nhà máy sản xuất khu vực miền Bắc',
-    },
-  });
+  // Sets to collect unique values
+  const officeSet = new Set<string>();
+  const departmentSet = new Set<string>();
+  const positionSet = new Set<string>();
+  const jobPositionSet = new Set<string>();
 
-  const factory2 = await prisma.office.create({
-    data: {
-      name: 'Nhà máy sản xuất 2',
-      type: OfficeType.FACTORY_OFFICE,
-      description: 'Nhà máy sản xuất khu vực miền Trung',
-    },
-  });
+  // Arrays to store unique objects
+  const officesSeed: any[] = [];
+  const departmentSeed: any[] = [];
+  const positionSeed: any[] = [];
+  const jobPositionSeed: any[] = [];
 
-  const factory3 = await prisma.office.create({
-    data: {
-      name: 'Nhà máy sản xuất 3',
-      type: OfficeType.FACTORY_OFFICE,
-      description: 'Nhà máy sản xuất khu vực miền Nam',
-    },
-  });
+  // Skip header row (assume first row is header)
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !row[0] || !row[1]) continue;
 
-  // 2. Create Departments
-  const departments = [];
+    const cd = String(row[2]).trim(); // CD
+    const vt = String(row[3]).trim(); // VTCV
+    const pb = String(row[4]).trim(); // PHÒNG BAN
+    const tt = String(row[5]).trim(); // TRỰC THUỘC
 
-  // Head Office departments
-  const headOfficeDepts = [
-    { name: 'Phòng Nhân sự', description: 'Quản lý nhân lực toàn công ty' },
-    { name: 'Phòng Tài chính', description: 'Quản lý tài chính và kế toán' },
-    { name: 'Phòng CNTT', description: 'Công nghệ thông tin và hệ thống' },
-    { name: 'Phòng Kinh doanh', description: 'Bán hàng và marketing' },
-    { name: 'Ban Giám đốc', description: 'Lãnh đạo cao cấp công ty' },
-  ];
+    // Offices
+    if (tt && !officeSet.has(tt)) {
+      officeSet.add(tt);
+      officesSeed.push({
+        name: tt,
+        type:
+          tt === 'VPĐH TH' ? OfficeType.HEAD_OFFICE : OfficeType.FACTORY_OFFICE,
+        description: tt,
+      });
+    }
 
-  for (const dept of headOfficeDepts) {
-    const department = await prisma.department.create({
-      data: {
-        name: dept.name,
-        description: dept.description,
-        officeId: headOffice.id,
+    // Departments (unique by name + office)
+    const deptKey = `${pb}__${tt}`;
+    if (pb && tt && !departmentSet.has(deptKey)) {
+      departmentSet.add(deptKey);
+      departmentSeed.push({ name: pb, office: tt });
+    }
+
+    // Positions
+    if (cd && !positionSet.has(cd)) {
+      positionSet.add(cd);
+      positionSeed.push({ name: cd, description: cd });
+    }
+
+    // JobPositions (unique by cd, vt, pb, tt)
+    const jobKey = `${cd}__${vt}__${pb}__${tt}`;
+    if (cd && vt && pb && tt && !jobPositionSet.has(jobKey)) {
+      jobPositionSet.add(jobKey);
+      jobPositionSeed.push({ cd, vt, pb, tt });
+    }
+  }
+
+  // 2. Seed Offices
+  const officeMap: Record<string, any> = {};
+  for (const o of officesSeed) {
+    // Ensure correct type assignment: only 'VPĐH TH' is HEAD_OFFICE, all others FACTORY_OFFICE
+    const officeType =
+      o.name === 'VPĐH TH' ? OfficeType.HEAD_OFFICE : OfficeType.FACTORY_OFFICE;
+    // Avoid duplicate create/find
+    if (officeMap[o.name]) continue;
+    let office = await prisma.office.findUnique({ where: { name: o.name } });
+    if (!office) {
+      office = await prisma.office.create({ data: { ...o, type: officeType } });
+    }
+    officeMap[o.name] = office;
+  }
+
+  // 3. Seed Departments
+  const departmentMap: Record<string, any> = {};
+  for (const d of departmentSeed) {
+    const key = `${d.name}__${d.office}`;
+    // Avoid duplicate department in departmentMap
+    if (departmentMap[key]) continue;
+    if (!officeMap[d.office]) {
+      console.warn(`Office not found for department: ${d.name}__${d.office}`);
+      continue;
+    }
+    // Check if department already exists
+    let department = await prisma.department.findFirst({
+      where: { name: d.name, officeId: officeMap[d.office].id },
+    });
+    if (!department) {
+      department = await prisma.department.create({
+        data: {
+          name: d.name,
+          officeId: officeMap[d.office].id,
+        },
+      });
+    }
+    departmentMap[key] = department;
+  }
+
+  // 4. Seed Positions
+  const positionMap: Record<string, any> = {};
+  for (const p of positionSeed) {
+    if (positionMap[p.name]) continue;
+    let position = await prisma.position.findUnique({
+      where: { name: p.name },
+    });
+    if (!position) {
+      position = await prisma.position.create({ data: p });
+    }
+    positionMap[p.name] = position;
+  }
+
+  // 5. Seed Job Positions
+  const jobPositionMap: Record<string, any> = {};
+  for (const jp of jobPositionSeed) {
+    const deptKey = `${jp.pb}__${jp.tt}`;
+    const position = positionMap[jp.cd];
+    const department = departmentMap[deptKey];
+    if (!position) {
+      console.warn(
+        `Position not found: ${jp.cd} for jobPosition (${jp.vt}, ${jp.pb}, ${jp.tt})`,
+      );
+      continue;
+    }
+    if (!department) {
+      console.warn(
+        `Department not found: ${jp.pb}__${jp.tt} for jobPosition (${jp.cd}, ${jp.vt})`,
+      );
+      continue;
+    }
+    const code = `${jp.cd}_${jp.vt.replace(/\s/g, '').toUpperCase()}_${jp.pb.replace(/\s/g, '').toUpperCase()}`;
+    // Avoid duplicate jobPosition in jobPositionMap
+    if (jobPositionMap[code]) continue;
+    // Check if jobPosition already exists
+    let jobPosition = await prisma.jobPosition.findFirst({
+      where: {
+        jobName: jp.vt,
+        positionId: position.id,
+        departmentId: department.id,
       },
     });
-    departments.push(department);
-  }
-
-  // Factory departments
-  const factoryDepts = [
-    { name: 'Phòng Sản xuất', description: 'Quản lý dây chuyền sản xuất' },
-    { name: 'Phòng Kỹ thuật', description: 'Bảo trì và kỹ thuật thiết bị' },
-    { name: 'Phòng Chất lượng', description: 'Kiểm soát chất lượng sản phẩm' },
-    { name: 'Phòng Kho vận', description: 'Quản lý kho bãi và vận chuyển' },
-  ];
-
-  for (const factory of [factory1, factory2, factory3]) {
-    for (const dept of factoryDepts) {
-      const department = await prisma.department.create({
+    if (!jobPosition) {
+      jobPosition = await prisma.jobPosition.create({
         data: {
-          name: dept.name,
-          description: dept.description,
-          officeId: factory.id,
+          jobName: jp.vt,
+          code,
+          positionId: position.id,
+          departmentId: department.id,
+          description: `${jp.cd} - ${jp.vt} tại ${jp.pb} (${jp.tt})`,
         },
       });
-      departments.push(department);
     }
+    jobPositionMap[code] = jobPosition;
   }
 
-  // 3. Create Positions
-  const positions = [];
-  const positionData = [
-    { name: 'Giám đốc', description: 'Lãnh đạo cao nhất' },
-    { name: 'Phó Giám đốc', description: 'Lãnh đạo cấp cao' },
-    { name: 'Trưởng phòng', description: 'Quản lý phòng ban' },
-    { name: 'Phó trưởng phòng', description: 'Hỗ trợ trưởng phòng' },
-    { name: 'Trưởng ca', description: 'Quản lý ca làm việc' },
-    { name: 'Trợ lý Line', description: 'Hỗ trợ dây chuyền sản xuất' },
-    { name: 'Nhân viên', description: 'Nhân viên thực hiện công việc' },
-    { name: 'Thực tập sinh', description: 'Sinh viên thực tập' },
-  ];
-
-  for (const pos of positionData) {
-    const position = await prisma.position.create({
+  // 6. Create demo users (optional, or skip if only import from Excel)
+  // Example: create a superadmin user in VPĐH TH
+  // Check duplicate superadmin
+  let superadmin = await prisma.user.findUnique({
+    where: { employeeCode: 'CEO001' },
+  });
+  if (!superadmin) {
+    const superadminJobPosition = Object.values(jobPositionMap)[0];
+    superadmin = await prisma.user.create({
       data: {
-        name: pos.name,
-        description: pos.description,
+        employeeCode: 'CEO001',
+        email: 'ceo@company.com',
+        password: hashedPassword,
+        firstName: 'Nguyễn',
+        lastName: 'Văn CEO',
+        cardId: '012345678901',
+        role: Role.SUPERADMIN,
+        jobPositionId: superadminJobPosition.id,
+        officeId: officeMap['VPĐH TH'].id,
       },
     });
-    positions.push(position);
   }
 
-  // 4. Create Job Positions
-  const jobPositions = [];
-
-  // Define job names for each department type
-  const jobMapping = {
-    'Ban Giám đốc': ['Điều hành công ty', 'Quản lý chiến lược'],
-    'Phòng Nhân sự': ['Tuyển dụng', 'Đào tạo nhân viên', 'Quản lý lương'],
-    'Phòng Tài chính': [
-      'Kế toán tổng hợp',
-      'Quản lý ngân quỹ',
-      'Kiểm toán nội bộ',
-    ],
-    'Phòng CNTT': [
-      'Phát triển phần mềm',
-      'Quản lý hệ thống',
-      'Hỗ trợ kỹ thuật',
-    ],
-    'Phòng Kinh doanh': ['Bán hàng', 'Marketing', 'Chăm sóc khách hàng'],
-    'Phòng Sản xuất': [
-      'Vận hành máy móc',
-      'Kiểm tra sản phẩm',
-      'Quản lý dây chuyền',
-    ],
-    'Phòng Kỹ thuật': [
-      'Bảo trì thiết bị',
-      'Sửa chữa máy móc',
-      'Lắp đặt thiết bị',
-    ],
-    'Phòng Chất lượng': [
-      'Kiểm tra chất lượng',
-      'Thử nghiệm sản phẩm',
-      'Đánh giá quy trình',
-    ],
-    'Phòng Kho vận': ['Quản lý kho', 'Vận chuyển hàng hóa', 'Kiểm kê tồn kho'],
-  };
-
-  for (const department of departments) {
-    const jobs = jobMapping[department.name] || ['Công việc chung'];
-
-    for (const jobName of jobs) {
-      // Create job positions for different levels
-      const relevantPositions = positions.filter((pos) => {
-        if (department.name === 'Ban Giám đốc') {
-          return ['Giám đốc', 'Phó Giám đốc'].includes(pos.name);
-        }
-        return !['Giám đốc', 'Phó Giám đốc'].includes(pos.name);
-      });
-
-      for (const position of relevantPositions) {
-        const code = `${position.name.substring(0, 2).toUpperCase()}_${department.name.replace('Phòng ', '').substring(0, 4).toUpperCase()}_${jobName.substring(0, 4).toUpperCase()}`;
-
-        const jobPosition = await prisma.jobPosition.create({
-          data: {
-            jobName,
-            code,
-            description: `${position.name} - ${jobName} tại ${department.name}`,
-            positionId: position.id,
-            departmentId: department.id,
-          },
-        });
-        jobPositions.push(jobPosition);
-      }
-    }
-  }
-
-  // 5. Create Users
-  const users = [];
-
-  // Create superadmin (CEO)
-  const ceoJobPosition = jobPositions.find(
-    (jp) =>
-      jp.code.startsWith('GI_') &&
-      departments.find((d) => d.id === jp.departmentId)?.name ===
-        'Ban Giám đốc',
-  );
-
-  const superadmin = await prisma.user.create({
-    data: {
-      employeeCode: 'CEO001',
-      email: 'ceo@company.com',
-      password: hashedPassword,
-      firstName: 'Nguyễn',
-      lastName: 'Văn CEO',
-      cardId: '012345678901',
-      role: Role.SUPERADMIN,
-      jobPositionId: ceoJobPosition!.id,
-      officeId: headOffice.id,
-    },
-  });
-  users.push(superadmin);
-
-  // Create admins (one for each office)
-  const offices = [headOffice, factory1, factory2, factory3];
-  for (let i = 0; i < offices.length; i++) {
-    const office = offices[i];
-    const adminDept = departments.find((d) => d.officeId === office.id);
-    const adminJobPosition = jobPositions.find(
-      (jp) => jp.departmentId === adminDept?.id && jp.code.includes('TR_'),
+  // Example: create an admin for each office
+  for (const [officeName, office] of Object.entries(officeMap)) {
+    const adminCode = `ADM_${officeName}`;
+    const admin = await prisma.user.findUnique({
+      where: { employeeCode: adminCode },
+    });
+    if (admin) continue;
+    // Find a job position in this office (pick first available)
+    const dept = Object.values(departmentMap).find(
+      (d) => d.officeId === office.id,
     );
-
-    if (adminJobPosition) {
-      const admin = await prisma.user.create({
-        data: {
-          employeeCode: `ADM${String(i + 1).padStart(3, '0')}`,
-          email: `admin${i + 1}@company.com`,
-          password: hashedPassword,
-          firstName: 'Trần',
-          lastName: `Văn Admin${i + 1}`,
-          cardId: `01234567890${i + 2}`,
-          role: Role.ADMIN,
-          jobPositionId: adminJobPosition.id,
-          officeId: office.id,
-        },
-      });
-      users.push(admin);
-    }
-  }
-
-  // Create regular users
-  for (let i = 0; i < 20; i++) {
-    const randomOffice = offices[Math.floor(Math.random() * offices.length)];
-    const officeDepts = departments.filter(
-      (d) => d.officeId === randomOffice.id,
+    if (!dept) continue;
+    const jobPos = Object.values(jobPositionMap).find(
+      (jp) => jp.departmentId === dept.id,
     );
-    const randomDept =
-      officeDepts[Math.floor(Math.random() * officeDepts.length)];
-    const deptJobPositions = jobPositions.filter(
-      (jp) => jp.departmentId === randomDept.id && !jp.code.includes('GI_'),
-    );
-    const randomJobPosition =
-      deptJobPositions[Math.floor(Math.random() * deptJobPositions.length)];
-
-    if (randomJobPosition) {
-      const user = await prisma.user.create({
-        data: {
-          employeeCode: `EMP${String(i + 1).padStart(3, '0')}`,
-          email: `user${i + 1}@company.com`,
-          password: hashedPassword,
-          firstName: ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng'][
-            Math.floor(Math.random() * 5)
-          ],
-          lastName: `Văn User${i + 1}`,
-          cardId:
-            i % 3 === 0
-              ? `${String(Math.floor(Math.random() * 900000000000) + 100000000000)}`
-              : null, // Some users have cardId, some don't
-          role: Role.USER,
-          jobPositionId: randomJobPosition.id,
-          officeId: randomOffice.id,
-        },
-      });
-      users.push(user);
-    }
+    if (!jobPos) continue;
+    await prisma.user.create({
+      data: {
+        employeeCode: adminCode,
+        email: `admin_${officeName}@company.com`,
+        password: hashedPassword,
+        firstName: 'Trần',
+        lastName: `Văn Admin ${officeName}`,
+        cardId: null,
+        role: Role.ADMIN,
+        jobPositionId: jobPos.id,
+        officeId: office.id,
+      },
+    });
   }
 
-  // 6. Create Sample Reports and Tasks
-  const currentYear = new Date().getFullYear();
-  const currentWeek = getWeekNumber(new Date());
-
-  // Standard task list for weekly reports
-  const standardTasks = [
-    'Hoàn thành công việc được giao',
-    'Tham gia họp phòng ban',
-    'Cập nhật tiến độ dự án',
-    'Kiểm tra và báo cáo chất lượng',
-    'Hỗ trợ đồng nghiệp khi cần',
-    'Học tập và nâng cao kỹ năng',
-    'Tuân thủ quy định an toàn',
-    'Báo cáo sự cố (nếu có)',
-    'Tham gia đào tạo',
-    'Đề xuất cải tiến quy trình',
-    'Hoàn thành báo cáo tuần',
-  ];
-
-  // Create reports for the last 4 weeks for some users
-  const sampleUsers = users.slice(0, 10); // Take first 10 users for sample reports
-
-  for (const user of sampleUsers) {
-    for (let weekOffset = 3; weekOffset >= 0; weekOffset--) {
-      const weekNum = Math.max(1, currentWeek - weekOffset);
-      const year = weekNum <= currentWeek ? currentYear : currentYear - 1;
-
-      const report = await prisma.report.create({
-        data: {
-          weekNumber: weekNum,
-          year: year,
-          userId: user.id,
-          isCompleted: weekOffset > 0 ? Math.random() > 0.3 : false,
-          isLocked: weekOffset > 1,
-        },
-      });
-
-      // Create tasks for each report
-      for (const taskName of standardTasks) {
-        await prisma.reportTask.create({
-          data: {
-            reportId: report.id,
-            taskName,
-            monday: Math.random() > 0.2,
-            tuesday: Math.random() > 0.2,
-            wednesday: Math.random() > 0.2,
-            thursday: Math.random() > 0.2,
-            friday: Math.random() > 0.2,
-            saturday: Math.random() > 0.5,
-            sunday: Math.random() > 0.7,
-            isCompleted: Math.random() > 0.3,
-            reasonNotDone:
-              Math.random() > 0.7 ? 'Chưa có thời gian hoàn thành' : null,
-          },
-        });
-      }
-    }
-  }
-
-  console.log('✅ Seed completed successfully!');
-  console.log(`📊 Created:`);
-  console.log(`  - ${offices.length} offices`);
-  console.log(`  - ${departments.length} departments`);
-  console.log(`  - ${positions.length} positions`);
-  console.log(`  - ${jobPositions.length} job positions`);
-  console.log(`  - ${users.length} users`);
-  console.log(`📧 Login credentials:`);
-  console.log(`  - Superadmin: CEO001 / 123456 (email: ceo@company.com)`);
-  console.log(`  - Admin: ADM001 / 123456 (email: admin1@company.com)`);
-  console.log(`  - User: EMP001 / 123456 (email: user1@company.com)`);
-}
-
-function getWeekNumber(date: Date): number {
-  const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
-  const pastDaysOfYear = (date.getTime() - firstDayOfYear.getTime()) / 86400000;
-  return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  console.log('✅ Seed completed with base data from Excel!');
 }
 
 main()

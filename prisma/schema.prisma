@@ -124,6 +124,8 @@ model ReportTask {
 
 enum Role {
   SUPERADMIN
+  OFFICE_MANAGER
+  OFFICE_ADMIN
   ADMIN
   USER
 }

@@ -35,6 +35,7 @@ export class AuthService {
       cardId,
       jobPositionId,
       officeId,
+      role,
     } = registerDto;
 
     // Check if user already exists by employeeCode
@@ -102,6 +103,7 @@ export class AuthService {
         cardId,
         jobPositionId,
         officeId,
+        role,
       },
       include: {
         office: true,

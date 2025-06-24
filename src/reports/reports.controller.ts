@@ -2,132 +2,170 @@ import {
   Controller,
   Get,
   Post,
-  Body,
-  Patch,
-  Param,
+  Patch, // Changed from Put to Patch
   Delete,
-  UseGuards,
+  Body,
+  Param,
   Query,
-  ParseIntPipe,
-  HttpCode,
-  HttpStatus,
-  BadRequestException,
+  UseGuards,
+  Req,
+  NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
-import { CreateReportDto } from './dto/create-report.dto';
-import { UpdateReportDto } from './dto/update-report.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { GetUser } from '../common/decorators/get-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
-import { User, Role } from '@prisma/client';
+import { CreateWeeklyReportDto, UpdateReportDto } from './dto/report.dto';
 
-@ApiTags('reports')
+// Replace the previous PaginationQueryDto definition with:
+interface PaginationQueryDto {
+  page?: number;
+  limit?: number;
+}
+
+@ApiTags('Reports')
+@ApiBearerAuth('JWT-auth')
 @Controller('reports')
 @UseGuards(JwtAuthGuard)
-@ApiBearerAuth('JWT-auth')
 export class ReportsController {
-  constructor(private reportsService: ReportsService) {}
+  constructor(private readonly reportsService: ReportsService) {}
 
   @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new weekly report' })
+  @ApiOperation({ summary: 'Create weekly report' })
   @ApiResponse({ status: 201, description: 'Report created successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid input or report already exists' })
-  @ApiResponse({ status: 403, description: 'Week is locked (after 10 AM Saturday)' })
-  create(@GetUser() user: User, @Body() createReportDto: CreateReportDto) {
-    return this.reportsService.create(user.id, createReportDto);
-  }
-
-  @Get('me')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get my reports' })
-  @ApiResponse({ status: 200, description: 'User reports retrieved successfully' })
-  findMyReports(@GetUser() user: User) {
-    return this.reportsService.findMyReports(user.id);
-  }
-
-  @Get('me/:weekNumber/:year')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get my report for specific week' })
-  @ApiParam({ name: 'weekNumber', description: 'Week number (1-53)' })
-  @ApiParam({ name: 'year', description: 'Year (e.g., 2024)' })
-  @ApiResponse({ status: 200, description: 'Report retrieved successfully' })
-  @ApiResponse({ status: 404, description: 'Report not found' })
-  findMyReport(
-    @GetUser() user: User,
-    @Param('weekNumber', ParseIntPipe) weekNumber: number,
-    @Param('year', ParseIntPipe) year: number,
+  async createWeeklyReport(
+    @Body() createReportDto: CreateWeeklyReportDto,
+    @Req() req: any,
   ) {
-    return this.reportsService.findMyReport(user.id, weekNumber, year);
+    return this.reportsService.createWeeklyReport(req.user.id, createReportDto);
   }
 
-  @Patch(':id')
-  @ApiOperation({ summary: 'Update my report' })
-  @ApiResponse({ status: 200, description: 'Report updated successfully' })
-  update(
-    @GetUser() user: any,
+  @Get('my')
+  @ApiOperation({ summary: 'Get my reports with pagination' })
+  async getMyReports(@Query() query: PaginationQueryDto, @Req() req: any) {
+    const page = query.page ? Number(query.page) : 1;
+    const limit = query.limit ? Number(query.limit) : 10;
+    return this.reportsService.getMyReports(req.user.id, page, limit);
+  }
+
+  @Get('current-week')
+  @ApiOperation({ summary: 'Get current week report' })
+  async getCurrentWeekReport(@Req() req: any) {
+    const report = await this.reportsService.getCurrentWeekReport(req.user.id);
+    if (!report) {
+      throw new NotFoundException('No report found for current week');
+    }
+    return report;
+  }
+
+  @Get('week/:weekNumber/year/:year')
+  @ApiOperation({ summary: 'Get report by week and year' })
+  async getReportByWeek(
+    @Param('weekNumber') weekNumber: string,
+    @Param('year') year: string,
+    @Req() req: any,
+  ) {
+    const report = await this.reportsService.getReportByWeek(
+      req.user.id,
+      parseInt(weekNumber),
+      parseInt(year),
+    );
+    if (!report) {
+      throw new NotFoundException('No report found for this week');
+    }
+    return report;
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get report by ID' })
+  async getReportById(@Param('id') id: string, @Req() req: any) {
+    const report = await this.reportsService.getReportById(id, req.user.id);
+
+    // Check if user can access this report
+    if (
+      report.userId !== req.user.id &&
+      !['ADMIN', 'SUPERADMIN'].includes(req.user.role)
+    ) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    return report;
+  }
+
+  @Patch(':id') // Changed from Put to Patch
+  @ApiOperation({ summary: 'Update report' })
+  async updateReport(
     @Param('id') id: string,
     @Body() updateReportDto: UpdateReportDto,
+    @Req() req: any,
   ) {
-    return this.reportsService.update(user.id, id, updateReportDto);
+    return this.reportsService.updateReport(req.user.id, id, updateReportDto);
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete my report' })
-  @ApiResponse({ status: 200, description: 'Report deleted successfully' })
-  remove(@GetUser() user: any, @Param('id') id: string) {
-    return this.reportsService.remove(user.id, id);
+  @ApiOperation({ summary: 'Delete report' })
+  async deleteReport(@Param('id') id: string, @Req() req: any) {
+    return this.reportsService.deleteReport(req.user.id, id);
   }
 
-  @Get('by-department')
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
-  @ApiOperation({ summary: 'Get reports by department' })
-  @ApiQuery({ name: 'weekNumber', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  async findReportsByDepartment(
-    @GetUser() user: any,
+  // New endpoint to delete individual task
+  @Delete('tasks/:taskId')
+  @ApiOperation({ summary: 'Delete individual task' })
+  @ApiResponse({ status: 200, description: 'Task deleted successfully' })
+  async deleteTask(@Param('taskId') taskId: string, @Req() req: any) {
+    return this.reportsService.deleteTask(req.user.id, taskId);
+  }
+
+  // New endpoint to update individual task
+  @Patch('tasks/:taskId')
+  @ApiOperation({ summary: 'Update individual task' })
+  @ApiResponse({ status: 200, description: 'Task updated successfully' })
+  async updateTask(
+    @Param('taskId') taskId: string,
+    @Body() updateTaskDto: any,
+    @Req() req: any,
+  ) {
+    return this.reportsService.updateTask(req.user.id, taskId, updateTaskDto);
+  }
+
+  // Admin/Superadmin endpoints
+  @Get('all')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Get all reports (Admin/Superadmin only)' })
+  async getAllReports(
+    @Query() query: PaginationQueryDto,
+    @Query('departmentId') departmentId?: string,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
   ) {
-    const departmentId = user.jobPosition?.departmentId;
-    if (!departmentId) {
-      throw new BadRequestException('User department not found');
-    }
-
-    return this.reportsService.findReportsByDepartment(
+    const page = query.page ? Number(query.page) : 1;
+    const limit = query.limit ? Number(query.limit) : 10;
+    return this.reportsService.getAllReports(
+      page,
+      limit,
       departmentId,
       weekNumber ? parseInt(weekNumber) : undefined,
       year ? parseInt(year) : undefined,
     );
   }
 
-  @Get('all')
-  @Roles(Role.SUPERADMIN)
-  @ApiOperation({ summary: 'Get all reports (superadmin only)' })
-  @ApiQuery({ name: 'weekNumber', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  findAllReports(
+  @Get('stats')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Get reports statistics (Admin/Superadmin only)' })
+  async getReportsStats(
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
   ) {
-    return this.reportsService.findAllReports(
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
-  }
-
-  @Get('statistics')
-  @Roles(Role.SUPERADMIN)
-  @ApiOperation({ summary: 'Get reports statistics (superadmin only)' })
-  @ApiQuery({ name: 'weekNumber', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  getStatistics(
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-  ) {
-    return this.reportsService.getReportsStatistics(
+    return this.reportsService.getReportStats(
       weekNumber ? parseInt(weekNumber) : undefined,
       year ? parseInt(year) : undefined,
     );

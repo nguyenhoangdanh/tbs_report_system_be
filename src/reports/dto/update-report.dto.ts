@@ -1,10 +1,8 @@
-import { 
-  IsArray, 
-  ValidateNested, 
-  IsString, 
-  IsBoolean, 
+import {
+  IsArray,
+  ValidateNested,
+  IsBoolean,
   IsOptional,
-  IsNotEmpty
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
@@ -65,7 +63,11 @@ export class UpdateReportDto {
   @IsBoolean()
   isCompleted?: boolean;
 
-  @ApiProperty({ description: 'Updated tasks', required: false, type: [UpdateReportTaskDto] })
+  @ApiProperty({
+    description: 'Updated tasks',
+    required: false,
+    type: [UpdateReportTaskDto],
+  })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

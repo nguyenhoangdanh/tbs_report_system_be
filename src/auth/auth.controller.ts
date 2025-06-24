@@ -6,6 +6,7 @@ import {
   Res,
   Query,
   Patch,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -62,14 +63,13 @@ export class AuthController {
 
   @Patch('change-password')
   @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Change password (partial update)' })
+  @ApiOperation({ summary: 'Change password' })
   @ApiResponse({ status: 200, description: 'Password changed successfully' })
-  changePassword(
-    @GetUser() user: any,
+  async changePassword(
     @Body() changePasswordDto: ChangePasswordDto,
+    @Req() req: any,
   ) {
-    return this.authService.changePassword(user.id, changePasswordDto);
+    return this.authService.changePassword(req.user.id, changePasswordDto);
   }
 
   @Post('refresh')
