@@ -190,17 +190,10 @@ export class AuthService {
 
     // Set CORS headers only in production
    if (this.envConfig.isProductionEnv) {
-        const corsConfig = this.envConfig.getCorsConfig();
         response.header('Access-Control-Allow-Credentials', 'true');
-        response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app');
-        response.header(
-          'Access-Control-Allow-Headers',
-          corsConfig.allowedHeaders.join(', '),
-        );
-        response.header(
-          'Access-Control-Allow-Methods',
-          corsConfig.methods.join(', '),
-        );
+        response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app'); // Frontend domain
+        response.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie, Set-Cookie');
+        response.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
       }
 
     const { password: _, ...userWithoutPassword } = user;

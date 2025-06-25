@@ -129,8 +129,11 @@ export class AuthController {
   @Post('debug-cookie')
   @Public()
   @ApiOperation({ summary: 'Debug cookie setting' })
-  debugCookie(@Res({ passthrough: true }) response: Response) {
+  debugCookie(@Res({ passthrough: true }) response: Response, @Req() req: any) {
     const testCookie = 'test-cookie-value-' + Date.now();
+    const origin = req.headers.origin;
+    
+    console.log('[DEBUG] Request origin:', origin);
     
     // Set test cookie with EXACT same config as auth cookie
     const cookieOptions = {
@@ -143,18 +146,27 @@ export class AuthController {
     
     response.cookie('debug-token', testCookie, cookieOptions);
     
-    // Set CORS headers if production
+    // Set CORS headers based on actual origin
     if (process.env.NODE_ENV === 'production') {
-      response.header('Access-Control-Allow-Credentials', 'true');
-      response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app');
-      response.header('Access-Control-Expose-Headers', 'Set-Cookie');
-      response.header('Vary', 'Origin');
+      const allowedOrigins = [
+        'https://weeklyreport-orpin.vercel.app', // Frontend domain
+      ];
+      
+      if (origin && allowedOrigins.includes(origin)) {
+        response.header('Access-Control-Allow-Credentials', 'true');
+        response.header('Access-Control-Allow-Origin', origin);
+        response.header('Access-Control-Expose-Headers', 'Set-Cookie');
+      } else {
+        console.log('[DEBUG] Origin not allowed:', origin);
+      }
     }
     
     return {
       success: true,
       message: 'Debug cookie set',
       environment: process.env.NODE_ENV,
+      origin: origin,
+      allowedOrigin: origin === 'https://weeklyreport-orpin.vercel.app',
       cookieValue: testCookie,
       cookieOptions,
     };

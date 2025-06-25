@@ -46,7 +46,7 @@ export class EnvironmentConfig {
     return [
       'http://localhost:3000',
       'http://127.0.0.1:3000',
-      'https://weeklyreport-orpin.vercel.app',
+      'https://weeklyreport-orpin.vercel.app', // Đây là frontend domain từ Network tab
     ];
   }
 
