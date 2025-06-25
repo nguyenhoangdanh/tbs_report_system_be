@@ -60,24 +60,26 @@ export class EnvironmentConfig {
     };
 
     if (this.isProduction) {
+      console.log('[COOKIE] Production cookie config with SameSite=None');
       return {
         ...baseConfig,
-        secure: true,
-        sameSite: 'none' as const,
-        // Không set domain để browser tự động handle cross-origin
-        // Hoặc nếu cần, chỉ set domain chính xác
+        secure: true, // HTTPS only
+        sameSite: 'none' as const, // Required for cross-origin
+        // Don't set domain - let browser handle it automatically
       };
     }
 
+    console.log('[COOKIE] Development cookie config with SameSite=Lax');
     return {
       ...baseConfig,
-      secure: false,
-      sameSite: 'lax' as const,
+      secure: false, // HTTP OK in dev
+      sameSite: 'lax' as const, // Lax for same-origin dev
     };
   }
 
   getCorsConfig(): CorsConfig {
-    const frontendUrls = [
+    // Strict allowlist for security
+    const allowedOrigins = [
       'http://localhost:3000',
       'http://127.0.0.1:3000',
       'https://weeklyreport-orpin.vercel.app',
@@ -86,14 +88,16 @@ export class EnvironmentConfig {
     if (this.isProduction) {
       return {
         origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
-          // Allow requests with no origin (mobile apps, Postman, etc.)
+          // Allow requests with no origin (mobile apps, server-to-server)
           if (!origin) return callback(null, true);
 
-          if (frontendUrls.includes(origin)) {
+          // Only allow specific origins in production
+          if (allowedOrigins.includes(origin)) {
+            console.log('[CORS CONFIG] Allowing origin:', origin);
             callback(null, true);
           } else {
-            console.log('CORS blocked origin:', origin);
-            callback(new Error('Not allowed by CORS'));
+            console.log('[CORS CONFIG] Blocking unauthorized origin:', origin);
+            callback(new Error(`CORS policy: Origin ${origin} not allowed`));
           }
         },
         credentials: true,
@@ -111,8 +115,9 @@ export class EnvironmentConfig {
       };
     }
 
+    // Development - allow localhost variants only
     return {
-      origin: true,
+      origin: allowedOrigins, // Use strict list even in development
       credentials: true,
       allowedHeaders: [
         'Origin',

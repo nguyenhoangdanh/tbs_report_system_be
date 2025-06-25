@@ -4,6 +4,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../common/prisma.service';
@@ -12,17 +13,17 @@ import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { EnvironmentConfig } from '../config/config.environment';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { Response } from 'express';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
-    private envConfig: EnvironmentConfig,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -126,48 +127,101 @@ export class AuthService {
   async login(loginDto: LoginDto, response: Response, rememberMe = false) {
     const { employeeCode, password } = loginDto;
 
+    // Only log in development
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(`Login attempt for employee: ${employeeCode}`);
+    }
+
+    // Optimized query with selective includes
     const user = await this.prisma.user.findUnique({
       where: { employeeCode },
       include: {
-        office: true,
+        office: {
+          select: { id: true, name: true }
+        },
         jobPosition: {
           include: {
-            position: true,
-            department: true,
+            position: {
+              select: { id: true, name: true }
+            },
+            department: {
+              select: { id: true, name: true }
+            },
           },
         },
       },
     });
 
     if (!user || !user.isActive) {
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.warn(`Login failed for ${employeeCode}: User not found or inactive`);
+      }
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    // Parallel password check and token generation for better performance
+    const [isPasswordValid, tokens] = await Promise.all([
+      bcrypt.compare(password, user.password),
+      this.generateTokens(user.id, user.employeeCode, user.role, rememberMe)
+    ]);
+
     if (!isPasswordValid) {
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.warn(`Login failed for ${employeeCode}: Invalid password`);
+      }
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const tokens = await this.generateTokens(
-      user.id,
-      user.employeeCode,
-      user.role,
-      rememberMe,
-    );
+    // Optimized cookie setting
+    const maxAge = rememberMe ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      maxAge,
+      path: '/',
+    };
 
-    // Set HTTP-only cookie
-    this.setAuthCookie(response, tokens.accessToken, rememberMe);
+    response.cookie('auth-token', tokens.accessToken, cookieOptions);
+
+    // Set CORS headers only in production
+    if (isProduction) {
+      response.header('Access-Control-Allow-Credentials', 'true');
+      response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app');
+      response.header('Access-Control-Expose-Headers', 'Set-Cookie');
+      response.header('Vary', 'Origin');
+    }
 
     const { password: _, ...userWithoutPassword } = user;
+
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(`Login successful for ${employeeCode}`);
+    }
+
     return {
+      success: true,
       user: userWithoutPassword,
       message: 'Login successful',
     };
   }
 
   async logout(response: Response) {
-    // Clear the auth cookie
-    this.clearAuthCookie(response);
+    this.logger.log('Logout request received');
+
+    // Simple cookie clearing - same config as setting
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    response.clearCookie('auth-token', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      path: '/',
+      // NO DOMAIN
+    });
+
+    this.logger.log('Auth cookie cleared');
     return { message: 'Logout successful' };
   }
 
@@ -220,12 +274,12 @@ export class AuthService {
 
     const tokens = await this.generateTokens(
       user.id,
-      user.employeeCode, // Fixed: use employeeCode instead of email
+      user.employeeCode,
       user.role,
       rememberMe,
     );
 
-    // Update cookie with new token
+    // Update cookie with new token - use same simple config
     this.setAuthCookie(response, tokens.accessToken, rememberMe);
 
     const { password: _, ...userWithoutPassword } = user;
@@ -314,30 +368,61 @@ export class AuthService {
     role: Role,
     rememberMe = false,
   ) {
-    const payload = { sub: userId, employeeCode, role };
-    const expiresIn = rememberMe
-      ? this.envConfig.jwtRememberMeExpiresIn
-      : this.envConfig.jwtExpiresIn;
+    const payload = {
+      sub: userId,
+      employeeCode,
+      role,
+      iat: Math.floor(Date.now() / 1000),
+    };
 
-    const accessToken = this.jwtService.sign(payload, { expiresIn });
+    const expiresIn = rememberMe ? '7d' : '1d';
+
+    // Async token generation for better performance
+    const accessToken = await this.jwtService.signAsync(payload, { expiresIn });
+
     return { accessToken };
   }
 
   private setAuthCookie(response: Response, token: string, rememberMe = false) {
     const maxAge = rememberMe
-      ? 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
-      : 24 * 60 * 60 * 1000; // 1 day in milliseconds
+      ? 7 * 24 * 60 * 60 * 1000
+      : 24 * 60 * 60 * 1000;
 
-    const cookieConfig = this.envConfig.getCookieConfig(maxAge);
+    const isProduction = process.env.NODE_ENV === 'production';
 
-    response.cookie('auth-token', token, cookieConfig);
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      maxAge,
+      path: '/',
+      // NO DOMAIN
+    };
+
+    this.logger.log('Setting auth cookie:', {
+      tokenLength: token.length,
+      maxAge,
+      config: cookieOptions,
+    });
+
+    response.cookie('auth-token', token, cookieOptions);
   }
 
   private clearAuthCookie(response: Response) {
-    const cookieConfig = this.envConfig.getCookieConfig(0);
-    response.clearCookie('auth-token', {
-      ...cookieConfig,
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      path: '/',
       maxAge: 0,
-    });
+      expires: new Date(0),
+      // NO DOMAIN
+    };
+
+    this.logger.log('Clearing auth cookie:', cookieOptions);
+
+    response.clearCookie('auth-token', cookieOptions);
   }
 }

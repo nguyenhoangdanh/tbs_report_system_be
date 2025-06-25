@@ -15,11 +15,11 @@ import { EnvironmentConfig } from '../config/config.environment';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async () => {
-        const envConfig = new EnvironmentConfig();
+        // Hardcode JWT config to avoid environment issues
         return {
-          secret: envConfig.jwtSecret,
+          secret: process.env.JWT_SECRET || 'weekly-report-secret-key-2024',
           signOptions: {
-            expiresIn: envConfig.jwtExpiresIn,
+            expiresIn: '1d',
           },
         };
       },

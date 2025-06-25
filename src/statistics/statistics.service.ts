@@ -1,9 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { getCurrentWeek } from '../common/utils/date.utils';
 
 @Injectable()
 export class StatisticsService {
+  private readonly logger = new Logger(StatisticsService.name);
+
   constructor(private prisma: PrismaService) {}
 
   async getDashboardStats(userId: string) {

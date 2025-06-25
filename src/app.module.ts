@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD } from '@nestjs/core';
@@ -22,6 +22,9 @@ import { AppService } from './app.service';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      // Optimize config loading
+      cache: true,
+      expandVariables: true,
     }),
     ScheduleModule.forRoot(),
     AuthModule,
@@ -46,4 +49,11 @@ import { AppService } from './app.service';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements OnApplicationShutdown {
+  constructor(private readonly prismaService: PrismaService) {}
+
+  // Graceful shutdown handling
+  async onApplicationShutdown(signal?: string) {
+    console.log(`🛑 Application shutdown signal received: ${signal}`);
+  }
+}

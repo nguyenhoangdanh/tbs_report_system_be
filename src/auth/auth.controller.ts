@@ -44,12 +44,30 @@ export class AuthController {
   @ApiOperation({ summary: 'Login user' })
   @ApiResponse({ status: 200, description: 'User logged in successfully' })
   @ApiQuery({ name: 'rememberMe', required: false, type: Boolean })
-  login(
+  async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) response: Response,
     @Query('rememberMe') rememberMe?: boolean,
   ) {
-    return this.authService.login(loginDto, response, rememberMe || false);
+    try {
+      console.log(`[AUTH CONTROLLER] Login attempt for: ${loginDto.employeeCode}`);
+      
+      const result = await this.authService.login(loginDto, response, rememberMe || false);
+      
+      console.log(`[AUTH CONTROLLER] Login successful for: ${loginDto.employeeCode}`);
+      
+      // Log response headers for debugging
+      console.log('[AUTH CONTROLLER] Response headers:', {
+        'set-cookie': response.getHeader('set-cookie'),
+        'access-control-allow-credentials': response.getHeader('access-control-allow-credentials'),
+        'access-control-allow-origin': response.getHeader('access-control-allow-origin'),
+      });
+      
+      return result;
+    } catch (error) {
+      console.error(`[AUTH CONTROLLER] Login error for ${loginDto.employeeCode}:`, error.message);
+      throw error;
+    }
   }
 
   @Post('logout')
@@ -106,5 +124,68 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Invalid employee info' })
   resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
+  }
+
+  @Post('debug-cookie')
+  @Public()
+  @ApiOperation({ summary: 'Debug cookie setting' })
+  debugCookie(@Res({ passthrough: true }) response: Response) {
+    const testCookie = 'test-cookie-value-' + Date.now();
+    
+    // Set test cookie with EXACT same config as auth cookie
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' as const : 'lax' as const,
+      maxAge: 60000, // 1 minute
+      path: '/',
+    };
+    
+    response.cookie('debug-token', testCookie, cookieOptions);
+    
+    // Set CORS headers if production
+    if (process.env.NODE_ENV === 'production') {
+      response.header('Access-Control-Allow-Credentials', 'true');
+      response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app');
+      response.header('Access-Control-Expose-Headers', 'Set-Cookie');
+      response.header('Vary', 'Origin');
+    }
+    
+    console.log('[DEBUG] Set test cookie:', testCookie);
+    console.log('[DEBUG] Cookie options:', cookieOptions);
+    console.log('[DEBUG] Response headers set:', {
+      'set-cookie': response.getHeader('set-cookie'),
+      'access-control-allow-credentials': response.getHeader('access-control-allow-credentials'),
+      'access-control-allow-origin': response.getHeader('access-control-allow-origin'),
+    });
+    
+    return {
+      success: true,
+      message: 'Debug cookie set',
+      environment: process.env.NODE_ENV,
+      cookieValue: testCookie,
+      cookieOptions,
+    };
+  }
+
+  // Test endpoint to check if debug cookie persists
+  @Post('check-cookie')
+  @Public()
+  @ApiOperation({ summary: 'Check if cookie persists' })
+  checkCookie(@Req() req: any) {
+    const debugToken = req.cookies['debug-token'];
+    const authToken = req.cookies['auth-token'];
+    
+    console.log('[CHECK] Debug token:', debugToken);
+    console.log('[CHECK] Auth token exists:', !!authToken);
+    console.log('[CHECK] All cookies:', req.cookies);
+    
+    return {
+      success: true,
+      hasDebugToken: !!debugToken,
+      hasAuthToken: !!authToken,
+      debugTokenValue: debugToken,
+      allCookies: Object.keys(req.cookies),
+    };
   }
 }
