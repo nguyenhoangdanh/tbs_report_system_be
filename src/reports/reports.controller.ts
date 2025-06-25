@@ -65,6 +65,42 @@ export class ReportsController {
     return report;
   }
 
+   // Admin/Superadmin endpoints
+  @Get('all')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Get all reports (Admin/Superadmin only)' })
+  async getAllReports(
+    @Query() query: PaginationQueryDto,
+    @Query('departmentId') departmentId?: string,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+  ) {
+    const page = query.page ? Number(query.page) : 1;
+    const limit = query.limit ? Number(query.limit) : 10;
+    return this.reportsService.getAllReports(
+      page,
+      limit,
+      departmentId,
+      weekNumber ? parseInt(weekNumber) : undefined,
+      year ? parseInt(year) : undefined,
+    );
+  }
+
+  @Get('stats')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Get reports statistics (Admin/Superadmin only)' })
+  async getReportsStats(
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+  ) {
+    return this.reportsService.getReportStats(
+      weekNumber ? parseInt(weekNumber) : undefined,
+      year ? parseInt(year) : undefined,
+    );
+  }
+
   @Get('week/:weekNumber/year/:year')
   @ApiOperation({ summary: 'Get report by week and year' })
   async getReportByWeek(
@@ -133,41 +169,5 @@ export class ReportsController {
     @Req() req: any,
   ) {
     return this.reportsService.updateTask(req.user.id, taskId, updateTaskDto);
-  }
-
-  // Admin/Superadmin endpoints
-  @Get('all')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'Get all reports (Admin/Superadmin only)' })
-  async getAllReports(
-    @Query() query: PaginationQueryDto,
-    @Query('departmentId') departmentId?: string,
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-  ) {
-    const page = query.page ? Number(query.page) : 1;
-    const limit = query.limit ? Number(query.limit) : 10;
-    return this.reportsService.getAllReports(
-      page,
-      limit,
-      departmentId,
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
-  }
-
-  @Get('stats')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'Get reports statistics (Admin/Superadmin only)' })
-  async getReportsStats(
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-  ) {
-    return this.reportsService.getReportStats(
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
   }
 }
