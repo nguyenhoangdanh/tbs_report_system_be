@@ -58,7 +58,9 @@ export class DepartmentsService {
       },
     });
     if (existingDepartment) {
-      throw new BadRequestException('Department with this name already exists in the office');
+      throw new BadRequestException(
+        'Department with this name already exists in the office',
+      );
     }
 
     return this.prisma.department.create({

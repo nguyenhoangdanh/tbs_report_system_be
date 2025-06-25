@@ -50,7 +50,10 @@ export class DepartmentsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get department by ID' })
-  @ApiResponse({ status: 200, description: 'Department retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Department retrieved successfully',
+  })
   findOne(@Param('id') id: string) {
     return this.departmentsService.findOne(id);
   }
