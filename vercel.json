@@ -11,5 +11,8 @@
       "src": "/(.*)",
       "dest": "dist/src/main.js"
     }
-  ]
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
 }

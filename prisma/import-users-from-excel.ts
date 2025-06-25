@@ -29,10 +29,11 @@ async function main() {
     const tt = String(row[5]).trim(); // TRỰC THUỘC (F)
     const cardId = row[6] ? String(row[6]).trim() : null; // CCCD (G)
 
-    // Split fullName to firstName, lastName (simple split, adjust as needed)
-    const [lastName, ...firstNameArr] = fullName.split(' ');
-    const firstName = firstNameArr.join(' ') || lastName;
-    const lastNameFinal = firstNameArr.length ? lastName : '';
+    // Split fullName to firstName (họ), lastName (tên đệm + tên)
+    // VD: "TRẦN THỊ NGỌC HUYỀN" => firstName: "TRẦN", lastName: "THỊ NGỌC HUYỀN"
+    const nameParts = fullName.split(' ');
+    const firstName = nameParts[0]; // Họ
+    const lastName = nameParts.slice(1).join(' '); // Tên đệm + tên
 
     // Check duplicate by employeeCode or cardId or email
     const email = `user${employeeCode}@company.com`;
@@ -96,7 +97,7 @@ async function main() {
         email,
         password,
         firstName,
-        lastName: lastNameFinal,
+        lastName,
         cardId,
         role: Role.USER,
         jobPositionId: jobPosition.id,

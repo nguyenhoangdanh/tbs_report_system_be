@@ -6,72 +6,55 @@ import { EnvironmentConfig } from './config/config.environment';
 import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
-// Global app cache for Vercel
-let app: NestExpressApplication;
+// Global app instance for Vercel serverless optimization
+let globalApp: NestExpressApplication | undefined;
 
-async function createNestApp() {
-  if (!app) {
-    app = await NestFactory.create<NestExpressApplication>(AppModule, {
-      // Minimal logging for performance
+async function createNestApp(): Promise<NestExpressApplication> {
+  try {
+    // Reuse app instance in production to avoid cold starts
+    if (process.env.NODE_ENV === 'production' && globalApp) {
+      return globalApp;
+    }
+
+    const app = await NestFactory.create<NestExpressApplication>(AppModule, {
       logger: process.env.NODE_ENV === 'production' 
-        ? false 
-        : ['error', 'warn'],
-      
-      // Disable unnecessary features for API
-      cors: false, // Handle manually for better control
-      bodyParser: true,
-      abortOnError: false, // Don't crash on startup errors
+        ? ['error', 'warn'] 
+        : ['log', 'error', 'warn', 'debug'],
+      abortOnError: false,
+      bufferLogs: true,
     });
 
     // Essential middleware only
     app.use(cookieParser());
     app.set('trust proxy', 1);
-    app.disable('x-powered-by');
 
-    // Simplified CORS for performance
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'https://weeklyreport-orpin.vercel.app',
-    ];
+    const envConfig = app.get(EnvironmentConfig);
+    const corsConfig = envConfig.getCorsConfig();
 
-    app.use((req, res, next) => {
-      const origin = req.headers.origin;
-      
-      if (origin && allowedOrigins.includes(origin)) {
-        res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
-        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Origin,Content-Type,Accept,Authorization,Cookie');
-        res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
-      }
+    // Single CORS configuration - remove duplicate middleware
+    app.enableCors(corsConfig);
 
-      if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-      }
-      next();
-    });
+    // Global prefix
+    app.setGlobalPrefix('api');
 
-    // Optimized validation
+    // Lightweight validation pipe
     app.useGlobalPipes(
       new ValidationPipe({
         transform: true,
         whitelist: true,
         forbidNonWhitelisted: false,
         disableErrorMessages: process.env.NODE_ENV === 'production',
-        validateCustomDecorators: false, // Disable for performance
         transformOptions: {
           enableImplicitConversion: true,
         },
       }),
     );
 
-    app.setGlobalPrefix('api');
-
-    // Skip Swagger in production
+    // Swagger only in development
     if (process.env.NODE_ENV === 'development') {
       const config = new DocumentBuilder()
         .setTitle('Weekly Work Report API')
+        .setDescription('API documentation')
         .setVersion('1.0')
         .addBearerAuth()
         .build();
@@ -81,36 +64,73 @@ async function createNestApp() {
     }
 
     await app.init();
+
+    // Cache app instance for production
+    if (process.env.NODE_ENV === 'production') {
+      globalApp = app;
+    }
+
+    return app;
+  } catch (error) {
+    console.error('Failed to create NestJS app:', error);
+    throw error;
   }
-  return app;
 }
 
 async function bootstrap() {
   try {
     const app = await createNestApp();
     const envConfig = app.get(EnvironmentConfig);
-    const port = envConfig.port;
+    const port = envConfig.port || 8080;
     
     await app.listen(port, '0.0.0.0');
-    console.log(`🚀 Application running on port ${port}`);
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🚀 Application running on: http://localhost:${port}/api`);
+    }
   } catch (error) {
     console.error('Bootstrap error:', error);
     process.exit(1);
   }
 }
 
-// Optimized Vercel handler
+// Optimized Vercel handler with better error handling
 export default async (req: any, res: any) => {
   try {
+    // Handle static requests quickly
+    if (req.url === '/favicon.ico') {
+      res.status(204).end();
+      return;
+    }
+
+    if (req.url === '/') {
+      res.json({
+        message: 'Weekly Work Report API',
+        status: 'ok',
+        docs: '/api',
+        health: '/api/health'
+      });
+      return;
+    }
+
     const app = await createNestApp();
     const expressApp = app.getHttpAdapter().getInstance();
+    
     return expressApp(req, res);
   } catch (error) {
     console.error('Vercel handler error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    
+    // Return proper error response
+    res.status(500).json({ 
+      error: 'Internal Server Error',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong',
+      timestamp: new Date().toISOString(),
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
+// Local development
 if (require.main === module) {
   bootstrap();
 }

@@ -24,7 +24,7 @@ export class AppController {
 
   @Get('health')
   @Public()
-  @ApiOperation({ summary: 'Health check with database status' })
+  @ApiOperation({ summary: 'Health check' })
   @ApiResponse({ status: 200, description: 'Health status' })
   async getHealth() {
     const startTime = Date.now();
@@ -42,6 +42,7 @@ export class AppController {
         },
         environment: process.env.NODE_ENV || 'development',
         version: '1.0.0',
+        uptime: Math.floor(process.uptime()),
       };
     } catch (error) {
       const dbLatency = Date.now() - startTime;

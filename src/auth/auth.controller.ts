@@ -151,14 +151,6 @@ export class AuthController {
       response.header('Vary', 'Origin');
     }
     
-    console.log('[DEBUG] Set test cookie:', testCookie);
-    console.log('[DEBUG] Cookie options:', cookieOptions);
-    console.log('[DEBUG] Response headers set:', {
-      'set-cookie': response.getHeader('set-cookie'),
-      'access-control-allow-credentials': response.getHeader('access-control-allow-credentials'),
-      'access-control-allow-origin': response.getHeader('access-control-allow-origin'),
-    });
-    
     return {
       success: true,
       message: 'Debug cookie set',

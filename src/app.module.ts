@@ -1,4 +1,4 @@
-import { Module, OnApplicationShutdown } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
@@ -16,14 +16,36 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ScheduleTasksModule } from './schedule/schedule.module';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { join } from 'path';
 
 @Module({
   imports: [
+      // Conditionally serve static files only in development
+    ...(process.env.NODE_ENV !== 'production'
+      ? [
+          ServeStaticModule.forRoot({
+            rootPath: join(__dirname, '..', 'uploads'),
+            serveRoot: '/uploads',
+            exclude: ['/api*'],
+          }),
+          ServeStaticModule.forRoot({
+            rootPath: join(__dirname, '..', 'public'),
+            serveRoot: '/',
+            exclude: ['/api*'],
+          }),
+        ]
+      : []),
+
+    // Config module
     ConfigModule.forRoot({
       isGlobal: true,
-      cache: true, // Cache config for performance
-      expandVariables: false, // Disable for performance
+      envFilePath:
+        process.env.NODE_ENV === 'production'
+          ? '.env'
+          : `.env.${process.env.NODE_ENV || 'development'}`,
     }),
+
     // ScheduleModule,
     AuthModule,
     UsersModule,
@@ -41,9 +63,12 @@ import { ScheduleTasksModule } from './schedule/schedule.module';
     AppService,
     {
       provide: PrismaService,
-      useClass: PrismaService,
-      // Make singleton
-      scope: 1, // Singleton scope
+      useFactory: () => {
+        return process.env.NODE_ENV === 'production' 
+          ? PrismaService.getInstance() 
+          : new PrismaService();
+      },
+      scope: 1, // Singleton
     },
     EnvironmentConfig,
     {
@@ -53,11 +78,4 @@ import { ScheduleTasksModule } from './schedule/schedule.module';
   ],
   exports: [PrismaService], // Export for other modules
 })
-export class AppModule implements OnApplicationShutdown {
-  constructor(private readonly prismaService: PrismaService) {}
-
-  // Graceful shutdown handling
-  async onApplicationShutdown(signal?: string) {
-    console.log(`🛑 Application shutdown signal received: ${signal}`);
-  }
-}
+export class AppModule {}

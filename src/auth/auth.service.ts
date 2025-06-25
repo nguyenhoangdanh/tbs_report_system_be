@@ -16,6 +16,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { Response } from 'express';
+import { EnvironmentConfig } from 'src/config/config.environment';
 
 @Injectable()
 export class AuthService {
@@ -24,6 +25,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private readonly envConfig: EnvironmentConfig,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -187,12 +189,19 @@ export class AuthService {
     response.cookie('auth-token', tokens.accessToken, cookieOptions);
 
     // Set CORS headers only in production
-    if (isProduction) {
-      response.header('Access-Control-Allow-Credentials', 'true');
-      response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app');
-      response.header('Access-Control-Expose-Headers', 'Set-Cookie');
-      response.header('Vary', 'Origin');
-    }
+   if (this.envConfig.isProductionEnv) {
+        const corsConfig = this.envConfig.getCorsConfig();
+        response.header('Access-Control-Allow-Credentials', 'true');
+        response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app');
+        response.header(
+          'Access-Control-Allow-Headers',
+          corsConfig.allowedHeaders.join(', '),
+        );
+        response.header(
+          'Access-Control-Allow-Methods',
+          corsConfig.methods.join(', '),
+        );
+      }
 
     const { password: _, ...userWithoutPassword } = user;
 

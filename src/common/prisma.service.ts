@@ -1,26 +1,24 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+// src/share/prisma.service.ts
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
-// Global connection cache for Vercel
-declare global {
-  var __prisma: PrismaClient | undefined;
-}
-
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(PrismaService.name);
+  private static instance: PrismaService | undefined;
 
   constructor() {
-    // Use singleton pattern for Vercel serverless
-    if (global.__prisma) {
-      return global.__prisma as any;
-    }
-
     super({
-      log: process.env.NODE_ENV === 'production' 
-        ? ['error'] 
-        : ['error', 'warn'],
-      
+      log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+      errorFormat: 'minimal',
       datasources: {
         db: {
           url: process.env.DATABASE_URL,
@@ -28,42 +26,57 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       },
     });
 
-    // Cache the instance globally
-    if (process.env.NODE_ENV === 'production') {
-      global.__prisma = this;
+    // Store instance for serverless reuse without 'this' aliasing
+    if (process.env.NODE_ENV === 'production' && !PrismaService.instance) {
+      PrismaService.instance = this;
     }
+  }
+
+  static getInstance(): PrismaService {
+    if (process.env.NODE_ENV === 'production' && PrismaService.instance) {
+      return PrismaService.instance;
+    }
+    return new PrismaService();
   }
 
   async onModuleInit() {
     try {
-      // Quick connection test with timeout
-      const connectPromise = this.$connect();
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timeout')), 5000)
-      );
-      
-      await Promise.race([connectPromise, timeoutPromise]);
-      this.logger.log('✅ Database connected');
+      await this.$connect();
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log('✅ Database connected');
+      }
     } catch (error) {
       this.logger.error('❌ Database connection failed:', error);
-      // Don't throw error to prevent app crash on cold start
+      // Don't throw in production to prevent cold start failures
+      if (process.env.NODE_ENV !== 'production') {
+        throw error;
+      }
     }
   }
 
   async onModuleDestroy() {
-    // Don't disconnect in production to maintain connection pool
+    // Keep connections alive in production for reuse
     if (process.env.NODE_ENV !== 'production') {
       await this.$disconnect();
     }
   }
 
-  // Health check method
   async isHealthy(): Promise<boolean> {
     try {
       await this.$queryRaw`SELECT 1`;
       return true;
-    } catch {
+    } catch (error) {
+      this.logger.error('Database health check failed:', error);
       return false;
     }
+  }
+
+  // Utility method to handle Prisma errors consistently
+  handleError(error: any, context: string): never {
+    this.logger.error(
+      `Database error in ${context}: ${error.message}`,
+      error.stack,
+    );
+    throw error;
   }
 }
