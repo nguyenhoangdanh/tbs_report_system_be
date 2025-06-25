@@ -226,3 +226,4 @@ Dockerfile.dev
 # Local development files
 /seed-data
 /scripts/dev-*
+.vercel
