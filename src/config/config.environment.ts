@@ -10,7 +10,7 @@ export interface CookieConfig {
 }
 
 export interface CorsConfig {
-  origin: string | string[] | boolean;
+  origin: string | string[] | boolean | ((origin: string, callback: (err: Error | null, allow?: boolean) => void) => void);
   credentials: boolean;
   allowedHeaders: string[];
   methods: string[];
@@ -64,12 +64,11 @@ export class EnvironmentConfig {
         ...baseConfig,
         secure: true,
         sameSite: 'none' as const,
-        // DON'T set domain for cross-origin cookies - let browser handle automatically
-        // This allows cookies to work across different Vercel subdomains
+        // Không set domain để browser tự động handle cross-origin
+        // Hoặc nếu cần, chỉ set domain chính xác
       };
     }
 
-    // Development configuration
     return {
       ...baseConfig,
       secure: false,
@@ -78,9 +77,25 @@ export class EnvironmentConfig {
   }
 
   getCorsConfig(): CorsConfig {
+    const frontendUrls = [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'https://weeklyreport-orpin.vercel.app',
+    ];
+
     if (this.isProduction) {
       return {
-        origin: this.frontendUrl,
+        origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
+          // Allow requests with no origin (mobile apps, Postman, etc.)
+          if (!origin) return callback(null, true);
+
+          if (frontendUrls.includes(origin)) {
+            callback(null, true);
+          } else {
+            console.log('CORS blocked origin:', origin);
+            callback(new Error('Not allowed by CORS'));
+          }
+        },
         credentials: true,
         allowedHeaders: [
           'Origin',
@@ -90,21 +105,14 @@ export class EnvironmentConfig {
           'Authorization',
           'Cookie',
           'Set-Cookie',
-          'mode',
-          'credentials',
-          'access-control-allow-origin',
-          'access-control-allow-headers',
-          'access-control-allow-methods',
-          'X-File-Name',
           'Cache-Control',
         ],
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
       };
     }
 
-    // Development configuration - more permissive
     return {
-      origin: true, // Allow all origins in development
+      origin: true,
       credentials: true,
       allowedHeaders: [
         'Origin',
@@ -114,12 +122,6 @@ export class EnvironmentConfig {
         'Authorization',
         'Cookie',
         'Set-Cookie',
-        'mode',
-        'credentials',
-        'access-control-allow-origin',
-        'access-control-allow-headers',
-        'access-control-allow-methods',
-        'X-File-Name',
         'Cache-Control',
       ],
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
