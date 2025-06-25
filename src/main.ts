@@ -1,124 +1,79 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { EnvironmentConfig } from './config/config.environment';
 import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import compression from 'compression';
 
-let app: any;
+// Global app cache for Vercel
+let app: NestExpressApplication;
 
 async function createNestApp() {
   if (!app) {
     app = await NestFactory.create<NestExpressApplication>(AppModule, {
-      // Performance optimizations
+      // Minimal logging for performance
       logger: process.env.NODE_ENV === 'production' 
-        ? ['error', 'warn'] 
-        : ['log', 'error', 'warn', 'debug', 'verbose']
+        ? false 
+        : ['error', 'warn'],
+      
+      // Disable unnecessary features for API
+      cors: false, // Handle manually for better control
+      bodyParser: true,
+      abortOnError: false, // Don't crash on startup errors
     });
 
-    // CRITICAL: Compression middleware for faster responses
-    app.use(compression({
-      level: 6, // Good balance between compression and CPU
-      threshold: 1024, // Only compress responses > 1KB
-      filter: (req, res) => {
-        // Don't compress responses that are already compressed
-        if (req.headers['x-no-compression']) return false;
-        return compression.filter(req, res);
-      }
-    }));
-
-    // IMPORTANT: Cookie parser MUST be first
+    // Essential middleware only
     app.use(cookieParser());
+    app.set('trust proxy', 1);
+    app.disable('x-powered-by');
 
-    // Trust proxy for Vercel/production with better config
-    app.set('trust proxy', true);
-    app.set('x-powered-by', false); // Security: Hide X-Powered-By header
-
-    const envConfig = app.get(EnvironmentConfig);
-    
-    // Optimized CORS with minimal overhead
-    const corsConfig = envConfig.getCorsConfig();
-    app.enableCors({
-      ...corsConfig,
-      optionsSuccessStatus: 200, // For legacy browser support
-      preflightContinue: false,   // Don't pass control to next handler
-      maxAge: 86400 // Cache preflight for 24 hours
-    });
-
-    // Simplified CORS middleware - remove duplicate processing
+    // Simplified CORS for performance
     const allowedOrigins = [
       'http://localhost:3000',
-      'http://127.0.0.1:3000', 
       'https://weeklyreport-orpin.vercel.app',
     ];
 
     app.use((req, res, next) => {
       const origin = req.headers.origin;
       
-      // Only log in development
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[CORS] Request from origin:', origin);
-      }
-      
       if (origin && allowedOrigins.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Access-Control-Allow-Credentials', 'true');
-        res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,PATCH,OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie, Set-Cookie, Cache-Control');
-        res.header('Access-Control-Expose-Headers', 'Set-Cookie');
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Origin,Content-Type,Accept,Authorization,Cookie');
+        res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
       }
 
-      // Quick OPTIONS handling
       if (req.method === 'OPTIONS') {
-        if (origin && allowedOrigins.includes(origin)) {
-          res.status(200).end();
-        } else {
-          res.status(403).end();
-        }
+        res.status(200).end();
         return;
       }
-
       next();
     });
 
-    // Optimized validation pipe
+    // Optimized validation
     app.useGlobalPipes(
       new ValidationPipe({
         transform: true,
         whitelist: true,
         forbidNonWhitelisted: false,
+        disableErrorMessages: process.env.NODE_ENV === 'production',
+        validateCustomDecorators: false, // Disable for performance
         transformOptions: {
           enableImplicitConversion: true,
-          exposeDefaultValues: true,
         },
-        // Performance: Disable detailed error messages in production
-        disableErrorMessages: process.env.NODE_ENV === 'production',
-        validateCustomDecorators: true,
       }),
     );
 
     app.setGlobalPrefix('api');
 
-    // Only setup Swagger in development for performance
-    if (process.env.NODE_ENV !== 'production') {
+    // Skip Swagger in production
+    if (process.env.NODE_ENV === 'development') {
       const config = new DocumentBuilder()
         .setTitle('Weekly Work Report API')
-        .setDescription('API documentation for Weekly Work Report Management System')
         .setVersion('1.0')
-        .addBearerAuth(
-          {
-            type: 'http',
-            scheme: 'bearer',
-            bearerFormat: 'JWT',
-            name: 'JWT',
-            description: 'Enter JWT token',
-            in: 'header',
-          },
-          'JWT-auth',
-        )
+        .addBearerAuth()
         .build();
 
       const document = SwaggerModule.createDocument(app, config);
@@ -136,28 +91,26 @@ async function bootstrap() {
     const envConfig = app.get(EnvironmentConfig);
     const port = envConfig.port;
     
-    // Performance: Listen on all interfaces for Vercel
     await app.listen(port, '0.0.0.0');
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`🚀 Application is running on: http://localhost:${port}/api`);
-      console.log(`📚 Swagger API documentation: http://localhost:${port}/api`);
-      console.log(`🌍 Environment: ${envConfig.nodeEnv}`);
-    }
+    console.log(`🚀 Application running on port ${port}`);
   } catch (error) {
-    console.error('Error starting the application:', error);
+    console.error('Bootstrap error:', error);
     process.exit(1);
   }
 }
 
-// Export for Vercel with performance optimization
+// Optimized Vercel handler
 export default async (req: any, res: any) => {
-  const app = await createNestApp();
-  const expressApp = app.getHttpAdapter().getInstance();
-  return expressApp(req, res);
+  try {
+    const app = await createNestApp();
+    const expressApp = app.getHttpAdapter().getInstance();
+    return expressApp(req, res);
+  } catch (error) {
+    console.error('Vercel handler error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 };
 
-// Run locally
 if (require.main === module) {
   bootstrap();
 }

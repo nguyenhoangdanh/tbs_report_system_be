@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model JobPosition {
@@ -22,6 +24,9 @@ model JobPosition {
   users        User[]
 
   @@unique([positionId, jobName, departmentId])
+  @@index([departmentId])
+  @@index([positionId])
+  @@index([isActive])
   @@map("job_positions")
 }
 
@@ -35,6 +40,7 @@ model Office {
   departments Department[]
   users       User[]
 
+  @@index([type])
   @@map("offices")
 }
 
@@ -49,6 +55,7 @@ model Department {
   jobPositions JobPosition[]
 
   @@unique([name, officeId])
+  @@index([officeId])
   @@map("departments")
 }
 
@@ -81,6 +88,11 @@ model User {
   jobPosition   JobPosition @relation(fields: [jobPositionId], references: [id])
   office        Office      @relation(fields: [officeId], references: [id])
 
+  @@index([jobPositionId])
+  @@index([officeId])
+  @@index([isActive])
+  @@index([role])
+  @@index([firstName, lastName])
   @@map("users")
 }
 
@@ -99,6 +111,9 @@ model Report {
   @@unique([weekNumber, year, userId])
   @@index([userId])
   @@index([year, weekNumber])
+  @@index([isCompleted])
+  @@index([isLocked])
+  @@index([createdAt])
   @@map("reports")
 }
 
@@ -119,6 +134,8 @@ model ReportTask {
   updatedAt     DateTime @updatedAt
   report        Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
+  @@index([reportId])
+  @@index([isCompleted])
   @@map("report_tasks")
 }
 

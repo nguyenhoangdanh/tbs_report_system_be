@@ -21,4 +21,43 @@ export class AppController {
   getStatus() {
     return this.appService.getStatus();
   }
+
+  @Get('health')
+  @Public()
+  @ApiOperation({ summary: 'Health check with database status' })
+  @ApiResponse({ status: 200, description: 'Health status' })
+  async getHealth() {
+    const startTime = Date.now();
+
+    try {
+      const isDbHealthy = await this.prismaService.isHealthy();
+      const dbLatency = Date.now() - startTime;
+
+      return {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        database: {
+          status: isDbHealthy ? 'connected' : 'disconnected',
+          latency: `${dbLatency}ms`,
+        },
+        environment: process.env.NODE_ENV || 'development',
+        version: '1.0.0',
+      };
+    } catch (error) {
+      const dbLatency = Date.now() - startTime;
+      this.logger.error('Health check failed:', error);
+
+      return {
+        status: 'error',
+        timestamp: new Date().toISOString(),
+        database: {
+          status: 'error',
+          latency: `${dbLatency}ms`,
+          error: error.message,
+        },
+        environment: process.env.NODE_ENV || 'development',
+        version: '1.0.0',
+      };
+    }
+  }
 }
