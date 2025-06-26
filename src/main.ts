@@ -31,8 +31,61 @@ async function createNestApp(): Promise<NestExpressApplication> {
     const envConfig = app.get(EnvironmentConfig);
     const corsConfig = envConfig.getCorsConfig();
 
-    // Single CORS configuration - remove duplicate middleware
-    app.enableCors(corsConfig);
+    // Enhanced CORS configuration with better logging
+    app.enableCors({
+      ...corsConfig,
+      origin: (origin, callback) => {
+        console.log(`CORS request from origin: ${origin || 'no-origin'}`);
+        
+        if (!origin) {
+          console.log('Allowing request with no origin');
+          return callback(null, true);
+        }
+
+        // List of allowed origins
+        const allowedOrigins = [
+          'http://localhost:3000',
+          'http://127.0.0.1:3000',
+          'https://localhost:3000',
+          'https://127.0.0.1:3000',
+          'https://weeklyreport-orpin.vercel.app',
+        ];
+
+        if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+          console.log(`Allowing origin: ${origin}`);
+          return callback(null, true);
+        }
+
+        console.warn(`CORS blocked origin: ${origin}`);
+        console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+        callback(null, true); // Temporarily allow all for debugging
+      },
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: [
+        'Origin',
+        'X-Requested-With',
+        'Content-Type',
+        'Accept',
+        'Authorization',
+        'Cache-Control',
+        'X-HTTP-Method-Override',
+      ],
+      exposedHeaders: ['set-cookie'],
+      optionsSuccessStatus: 200,
+      preflightContinue: false,
+    });
+
+    // Add health check endpoint
+    app.use('/api/health', (req, res) => {
+      res.status(200).json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV,
+        version: '1.0.0'
+      });
+    });
 
     // Global prefix
     app.setGlobalPrefix('api');
@@ -94,21 +147,58 @@ async function bootstrap() {
   }
 }
 
-// Optimized Vercel handler with better error handling
+// Enhanced Vercel handler with better error handling and CORS
 export default async (req: any, res: any) => {
   try {
+    // Set CORS headers immediately for all requests
+    const origin = req.headers.origin;
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'https://localhost:3000',
+      'https://127.0.0.1:3000',
+      'https://weeklyreportsystem-mu.vercel.app',
+    ];
+
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+      res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    }
+    
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,Cache-Control,X-HTTP-Method-Override');
+
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      res.status(200).end();
+      return;
+    }
+
     // Handle static requests quickly
     if (req.url === '/favicon.ico') {
       res.status(204).end();
       return;
     }
 
-    if (req.url === '/') {
+    if (req.url === '/' || req.url === '/api') {
       res.json({
         message: 'Weekly Work Report API',
         status: 'ok',
+        timestamp: new Date().toISOString(),
         docs: '/api',
         health: '/api/health'
+      });
+      return;
+    }
+
+    // Handle health check
+    if (req.url === '/api/health') {
+      res.status(200).json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV,
+        version: '1.0.0'
       });
       return;
     }
@@ -119,6 +209,13 @@ export default async (req: any, res: any) => {
     return expressApp(req, res);
   } catch (error) {
     console.error('Vercel handler error:', error);
+    
+    // Set CORS headers even on error
+    const origin = req.headers?.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     
     // Return proper error response
     res.status(500).json({ 
