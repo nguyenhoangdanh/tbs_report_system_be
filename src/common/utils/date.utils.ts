@@ -1,15 +1,39 @@
 export function getCurrentWeek(): { weekNumber: number; year: number } {
   const now = new Date();
   const startOfYear = new Date(now.getFullYear(), 0, 1);
-  const days = Math.floor(
-    (now.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000),
-  );
-  const weekNumber = Math.ceil((days + startOfYear.getDay() + 1) / 7);
+  const pastDaysOfYear = (now.getTime() - startOfYear.getTime()) / 86400000;
+  const weekNumber = Math.ceil((pastDaysOfYear + startOfYear.getDay() + 1) / 7);
 
   return {
-    weekNumber,
+    weekNumber: Math.min(weekNumber, 52), // Ensure max 52 weeks
     year: now.getFullYear(),
   };
+}
+
+export function getPreviousWeek(): { weekNumber: number; year: number } {
+  const current = getCurrentWeek();
+  let prevWeek = current.weekNumber - 1;
+  let prevYear = current.year;
+
+  if (prevWeek < 1) {
+    prevWeek = 52;
+    prevYear = current.year - 1;
+  }
+
+  return { weekNumber: prevWeek, year: prevYear };
+}
+
+export function getNextWeek(): { weekNumber: number; year: number } {
+  const current = getCurrentWeek();
+  let nextWeek = current.weekNumber + 1;
+  let nextYear = current.year;
+
+  if (nextWeek > 52) {
+    nextWeek = 1;
+    nextYear = current.year + 1;
+  }
+
+  return { weekNumber: nextWeek, year: nextYear };
 }
 
 export function getWeekDateRange(

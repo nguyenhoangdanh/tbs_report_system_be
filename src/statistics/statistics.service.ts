@@ -20,6 +20,15 @@ export class StatisticsService {
           userId,
         },
       },
+      include: {
+        tasks: {
+          select: {
+            taskName: true,
+            isCompleted: true,
+            reasonNotDone: true,
+          },
+        },
+      },
     });
 
     // Get total reports count
@@ -64,6 +73,44 @@ export class StatisticsService {
       },
     });
 
+    // Analyze current week incomplete tasks with task names
+    let incompleteTasksAnalysis = null;
+    if (currentWeekReport) {
+      const incompleteTasks = currentWeekReport.tasks.filter(
+        (task) => !task.isCompleted,
+      );
+
+      // Group reasons for incomplete tasks with task details
+      const reasonsMap = new Map<string, {
+        count: number;
+        tasks: Array<{ taskName: string; reason: string }>;
+      }>();
+      
+      incompleteTasks.forEach((task) => {
+        const reason = task.reasonNotDone?.trim() || 'Không có lý do';
+        if (!reasonsMap.has(reason)) {
+          reasonsMap.set(reason, { count: 0, tasks: [] });
+        }
+        const reasonData = reasonsMap.get(reason)!;
+        reasonData.count += 1;
+        reasonData.tasks.push({
+          taskName: task.taskName,
+          reason: task.reasonNotDone?.trim() || 'Không có lý do'
+        });
+      });
+
+      incompleteTasksAnalysis = {
+        totalIncompleteTasks: incompleteTasks.length,
+        totalTasks: currentWeekReport.tasks.length,
+        reasons: Array.from(reasonsMap.entries()).map(([reason, data]) => ({
+          reason,
+          count: data.count,
+          percentage: Math.round((data.count / incompleteTasks.length) * 100),
+          tasks: data.tasks.slice(0, 3), // Show up to 3 sample tasks
+        })).sort((a, b) => b.count - a.count),
+      };
+    }
+
     return {
       currentWeek: {
         weekNumber,
@@ -71,6 +118,7 @@ export class StatisticsService {
         hasReport: !!currentWeekReport,
         isCompleted: currentWeekReport?.isCompleted || false,
         isLocked: currentWeekReport?.isLocked || false,
+        incompleteTasksAnalysis,
       },
       totals: {
         totalReports,
@@ -95,7 +143,7 @@ export class StatisticsService {
       take: 12,
     });
 
-    // Get weekly completion trend (last 8 weeks)
+    // Get weekly completion trend (last 8 weeks) with reasons
     const weeklyTrend = await this.prisma.report.findMany({
       where: { userId },
       select: {
@@ -103,19 +151,80 @@ export class StatisticsService {
         year: true,
         isCompleted: true,
         createdAt: true,
+        tasks: {
+          select: {
+            taskName: true,
+            isCompleted: true,
+            reasonNotDone: true,
+          },
+        },
       },
       orderBy: [{ year: 'desc' }, { weekNumber: 'desc' }],
       take: 8,
     });
 
+    // Analyze incomplete task reasons across all reports with task names
+    const allIncompleteTasks = weeklyTrend
+      .flatMap((report) => 
+        report.tasks
+          .filter((task) => !task.isCompleted)
+          .map((task) => ({
+            taskName: task.taskName,
+            reasonNotDone: task.reasonNotDone,
+            weekNumber: report.weekNumber,
+            year: report.year,
+          }))
+      );
+
+    const reasonsAnalysis = new Map<string, {
+      count: number;
+      tasks: Array<{ taskName: string; weekNumber: number; year: number }>;
+    }>();
+    
+    allIncompleteTasks.forEach((task) => {
+      const reason = task.reasonNotDone?.trim() || 'Không có lý do';
+      if (!reasonsAnalysis.has(reason)) {
+        reasonsAnalysis.set(reason, { count: 0, tasks: [] });
+      }
+      const reasonData = reasonsAnalysis.get(reason)!;
+      reasonData.count += 1;
+      reasonData.tasks.push({
+        taskName: task.taskName,
+        weekNumber: task.weekNumber,
+        year: task.year,
+      });
+    });
+
+    const topReasons = Array.from(reasonsAnalysis.entries())
+      .map(([reason, data]) => ({
+        reason,
+        count: data.count,
+        percentage: Math.round((data.count / allIncompleteTasks.length) * 100),
+        sampleTasks: data.tasks.slice(0, 5), // Show up to 5 sample tasks
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10); // Top 10 reasons
+
     return {
       monthlyStats,
-      weeklyTrend,
+      weeklyTrend: weeklyTrend.map((week) => ({
+        weekNumber: week.weekNumber,
+        year: week.year,
+        isCompleted: week.isCompleted,
+        createdAt: week.createdAt,
+        totalTasks: week.tasks.length,
+        completedTasks: week.tasks.filter((task) => task.isCompleted).length,
+        incompleteTasks: week.tasks.filter((task) => !task.isCompleted).length,
+      })),
+      incompleteReasonsAnalysis: {
+        totalIncompleteTasks: allIncompleteTasks.length,
+        topReasons,
+      },
     };
   }
 
   async getRecentActivities(userId: string) {
-    // Get recent reports
+    // Get recent reports with task details
     const recentReports = await this.prisma.report.findMany({
       where: { userId },
       include: {
@@ -123,6 +232,7 @@ export class StatisticsService {
           select: {
             taskName: true,
             isCompleted: true,
+            reasonNotDone: true,
           },
         },
       },
@@ -137,6 +247,27 @@ export class StatisticsService {
         (task) => task.isCompleted,
       ).length;
       const totalTasks = report.tasks.length;
+      const incompleteTasks = report.tasks.filter((task) => !task.isCompleted);
+
+      // Get most common reason for incomplete tasks in this report with task names
+      const reasonsMap = new Map<string, {
+        count: number;
+        tasks: Array<{ taskName: string }>;
+      }>();
+      
+      incompleteTasks.forEach((task) => {
+        const reason = task.reasonNotDone?.trim() || 'Không có lý do';
+        if (!reasonsMap.has(reason)) {
+          reasonsMap.set(reason, { count: 0, tasks: [] });
+        }
+        const reasonData = reasonsMap.get(reason)!;
+        reasonData.count += 1;
+        reasonData.tasks.push({ taskName: task.taskName });
+      });
+
+      const mostCommonReasonData = reasonsMap.size > 0 
+        ? Array.from(reasonsMap.entries()).sort((a, b) => b[1].count - a[1].count)[0]
+        : null;
 
       return {
         id: report.id,
@@ -146,6 +277,9 @@ export class StatisticsService {
         status: report.isCompleted ? 'completed' : 'pending',
         createdAt: report.createdAt,
         updatedAt: report.updatedAt,
+        incompleteTasksCount: incompleteTasks.length,
+        mostCommonIncompleteReason: mostCommonReasonData?.[0] || null,
+        incompleteTasksSample: mostCommonReasonData?.[1].tasks.slice(0, 2) || [], // Show up to 2 sample tasks
       };
     });
 
@@ -557,7 +691,7 @@ export class StatisticsService {
     const departmentBreakdown = departments.map((dept) => {
       const users = dept.jobPositions.flatMap((jp) => jp.users);
       const usersWithReports = users.filter((user) => user.reports.length > 0);
-      const completedReports = usersWithReports.filter((user) =>
+      const completedUsers = users.filter((user) =>
         user.reports.some((report) => report.isCompleted),
       );
 
@@ -588,7 +722,7 @@ export class StatisticsService {
         officeName: dept.office.name,
         totalUsers: users.length,
         submittedReports: usersWithReports.length,
-        completedReports: completedReports.length,
+        completedReports: completedUsers.length,
         totalTasks,
         completedTasks,
         submissionRate:
@@ -598,7 +732,7 @@ export class StatisticsService {
         completionRate:
           usersWithReports.length > 0
             ? Math.round(
-                (completedReports.length / usersWithReports.length) * 100,
+                (completedUsers.length / usersWithReports.length) * 100,
               )
             : 0,
         taskCompletionRate:
@@ -620,7 +754,7 @@ export class StatisticsService {
   async getWeeklyTaskStats(userId: string) {
     const { weekNumber, year } = getCurrentWeek();
 
-    // Lấy tất cả các báo cáo của user trong tuần này
+    // Lấy tất cả các báo cáo của user trong tuần này với task details
     const reports = await this.prisma.report.findMany({
       where: {
         userId,
@@ -628,12 +762,22 @@ export class StatisticsService {
         year,
       },
       include: {
-        tasks: true,
+        tasks: {
+          select: {
+            taskName: true,
+            isCompleted: true,
+            reasonNotDone: true,
+          },
+        },
       },
     });
 
     let completed = 0;
     let uncompleted = 0;
+    const incompleteReasons = new Map<string, { 
+      count: number; 
+      tasks: Array<{ taskName: string; reason: string }>;
+    }>();
 
     reports.forEach((report) => {
       report.tasks.forEach((task) => {
@@ -641,9 +785,28 @@ export class StatisticsService {
           completed += 1;
         } else {
           uncompleted += 1;
+          const reason = task.reasonNotDone?.trim() || 'Không có lý do';
+          if (!incompleteReasons.has(reason)) {
+            incompleteReasons.set(reason, { count: 0, tasks: [] });
+          }
+          const reasonData = incompleteReasons.get(reason)!;
+          reasonData.count += 1;
+          reasonData.tasks.push({
+            taskName: task.taskName,
+            reason: task.reasonNotDone?.trim() || 'Không có lý do'
+          });
         }
       });
     });
+
+    const reasonsAnalysis = Array.from(incompleteReasons.entries())
+      .map(([reason, data]) => ({
+        reason,
+        count: data.count,
+        percentage: uncompleted > 0 ? Math.round((data.count / uncompleted) * 100) : 0,
+        sampleTasks: data.tasks.slice(0, 3), // Show up to 3 sample tasks with names
+      }))
+      .sort((a, b) => b.count - a.count);
 
     return {
       weekNumber,
@@ -651,19 +814,27 @@ export class StatisticsService {
       completed,
       uncompleted,
       total: completed + uncompleted,
+      incompleteReasonsAnalysis: reasonsAnalysis,
     };
   }
 
   async getMonthlyTaskStats(userId: string, year?: number) {
     const currentYear = year || new Date().getFullYear();
-    // Lấy tất cả báo cáo của user trong năm
+    
+    // Lấy tất cả báo cáo của user trong năm với task details
     const reports = await this.prisma.report.findMany({
       where: {
         userId,
         year: currentYear,
       },
       include: {
-        tasks: true,
+        tasks: {
+          select: {
+            taskName: true,
+            isCompleted: true,
+            reasonNotDone: true,
+          },
+        },
       },
     });
 
@@ -673,6 +844,10 @@ export class StatisticsService {
       completed: 0,
       uncompleted: 0,
       total: 0,
+      incompleteReasons: new Map<string, { 
+        count: number; 
+        tasks: Array<{ taskName: string }>;
+      }>(),
     }));
 
     reports.forEach((report) => {
@@ -682,49 +857,225 @@ export class StatisticsService {
           stats[month].completed += 1;
         } else {
           stats[month].uncompleted += 1;
+          const reason = task.reasonNotDone?.trim() || 'Không có lý do';
+          const reasonsMap = stats[month].incompleteReasons;
+          if (!reasonsMap.has(reason)) {
+            reasonsMap.set(reason, { count: 0, tasks: [] });
+          }
+          const reasonData = reasonsMap.get(reason)!;
+          reasonData.count += 1;
+          reasonData.tasks.push({ taskName: task.taskName });
         }
         stats[month].total += 1;
       });
     });
 
+    // Convert reasons map to array for each month
+    const processedStats = stats.map((monthData) => ({
+      month: monthData.month,
+      completed: monthData.completed,
+      uncompleted: monthData.uncompleted,
+      total: monthData.total,
+      topIncompleteReasons: Array.from(monthData.incompleteReasons.entries())
+        .map(([reason, data]) => ({
+          reason,
+          count: data.count,
+          percentage: monthData.uncompleted > 0 
+            ? Math.round((data.count / monthData.uncompleted) * 100) 
+            : 0,
+          sampleTasks: data.tasks.slice(0, 3), // Show up to 3 sample tasks with names
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5), // Top 5 reasons per month
+    }));
+
     return {
       year: currentYear,
-      stats,
+      stats: processedStats,
     };
   }
 
   async getYearlyTaskStats(userId: string) {
-    // Lấy tất cả báo cáo của user
+    // Lấy tất cả báo cáo của user với task details
     const reports = await this.prisma.report.findMany({
       where: { userId },
-      include: { tasks: true },
+      include: { 
+        tasks: {
+          select: {
+            taskName: true,
+            isCompleted: true,
+            reasonNotDone: true,
+          },
+        },
+      },
     });
 
     // Gom nhóm theo năm
     const yearlyMap = new Map<
       number,
-      { completed: number; uncompleted: number; total: number }
+      { 
+        completed: number; 
+        uncompleted: number; 
+        total: number;
+        incompleteReasons: Map<string, { 
+          count: number; 
+          tasks: Array<{ taskName: string }>;
+        }>;
+      }
     >();
 
     reports.forEach((report) => {
       const year = report.year;
       if (!yearlyMap.has(year)) {
-        yearlyMap.set(year, { completed: 0, uncompleted: 0, total: 0 });
+        yearlyMap.set(year, { 
+          completed: 0, 
+          uncompleted: 0, 
+          total: 0,
+          incompleteReasons: new Map(),
+        });
       }
+      
+      const yearData = yearlyMap.get(year)!;
       report.tasks.forEach((task) => {
         if (task.isCompleted) {
-          yearlyMap.get(year)!.completed += 1;
+          yearData.completed += 1;
         } else {
-          yearlyMap.get(year)!.uncompleted += 1;
+          yearData.uncompleted += 1;
+          const reason = task.reasonNotDone?.trim() || 'Không có lý do';
+          if (!yearData.incompleteReasons.has(reason)) {
+            yearData.incompleteReasons.set(reason, { count: 0, tasks: [] });
+          }
+          const reasonData = yearData.incompleteReasons.get(reason)!;
+          reasonData.count += 1;
+          reasonData.tasks.push({ taskName: task.taskName });
         }
-        yearlyMap.get(year)!.total += 1;
+        yearData.total += 1;
       });
     });
 
     const stats = Array.from(yearlyMap.entries())
-      .map(([year, data]) => ({ year, ...data }))
+      .map(([year, data]) => ({
+        year,
+        completed: data.completed,
+        uncompleted: data.uncompleted,
+        total: data.total,
+        topIncompleteReasons: Array.from(data.incompleteReasons.entries())
+          .map(([reason, reasonData]) => ({
+            reason,
+            count: reasonData.count,
+            percentage: data.uncompleted > 0 
+              ? Math.round((reasonData.count / data.uncompleted) * 100) 
+              : 0,
+            sampleTasks: reasonData.tasks.slice(0, 5), // Show up to 5 sample tasks with names
+          }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10), // Top 10 reasons per year
+      }))
       .sort((a, b) => a.year - b.year);
 
     return { stats };
+  }
+
+  // Enhanced method to get detailed incomplete reasons analysis
+  async getIncompleteReasonsAnalysis(userId: string, filters: {
+    weekNumber?: number;
+    year?: number;
+    startDate?: Date;
+    endDate?: Date;
+  }) {
+    const whereClause: any = { userId };
+
+    if (filters.weekNumber && filters.year) {
+      whereClause.weekNumber = filters.weekNumber;
+      whereClause.year = filters.year;
+    } else if (filters.startDate && filters.endDate) {
+      whereClause.createdAt = {
+        gte: filters.startDate,
+        lte: filters.endDate,
+      };
+    }
+
+    const reports = await this.prisma.report.findMany({
+      where: whereClause,
+      include: {
+        tasks: {
+          where: {
+            isCompleted: false,
+          },
+          select: {
+            taskName: true,
+            reasonNotDone: true,
+            monday: true,
+            tuesday: true,
+            wednesday: true,
+            thursday: true,
+            friday: true,
+            saturday: true,
+            sunday: true,
+          },
+        },
+      },
+    });
+
+    const reasonsAnalysis = new Map<string, {
+      count: number;
+      tasks: Array<{
+        taskName: string;
+        weekNumber: number;
+        year: number;
+        daysWorked: string[];
+      }>;
+    }>();
+
+    reports.forEach((report) => {
+      report.tasks.forEach((task) => {
+        const reason = task.reasonNotDone?.trim() || 'Không có lý do';
+        
+        if (!reasonsAnalysis.has(reason)) {
+          reasonsAnalysis.set(reason, { count: 0, tasks: [] });
+        }
+
+        const reasonData = reasonsAnalysis.get(reason)!;
+        reasonData.count += 1;
+
+        // Get days worked for this task
+        const daysWorked = [];
+        if (task.monday) daysWorked.push('Thứ 2');
+        if (task.tuesday) daysWorked.push('Thứ 3');
+        if (task.wednesday) daysWorked.push('Thứ 4');
+        if (task.thursday) daysWorked.push('Thứ 5');
+        if (task.friday) daysWorked.push('Thứ 6');
+        if (task.saturday) daysWorked.push('Thứ 7');
+        if (task.sunday) daysWorked.push('Chủ nhật');
+
+        reasonData.tasks.push({
+          taskName: task.taskName,
+          weekNumber: report.weekNumber,
+          year: report.year,
+          daysWorked,
+        });
+      });
+    });
+
+    const totalIncompleteTasks = Array.from(reasonsAnalysis.values())
+      .reduce((sum, data) => sum + data.count, 0);
+
+    const analysis = Array.from(reasonsAnalysis.entries())
+      .map(([reason, data]) => ({
+        reason,
+        count: data.count,
+        percentage: totalIncompleteTasks > 0 
+          ? Math.round((data.count / totalIncompleteTasks) * 100) 
+          : 0,
+        tasks: data.tasks.slice(0, 10), // Limit to 10 sample tasks with names
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      totalIncompleteTasks,
+      totalReports: reports.length,
+      filters,
+      reasonsAnalysis: analysis,
+    };
   }
 }

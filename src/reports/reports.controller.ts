@@ -147,8 +147,12 @@ export class ReportsController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete report' })
+  @ApiResponse({ status: 200, description: 'Report deleted successfully' })
+  @ApiResponse({ status: 404, description: 'Report not found' })
+  @ApiResponse({ status: 403, description: 'Access denied or report locked' })
   async deleteReport(@Param('id') id: string, @Req() req: any) {
-    return this.reportsService.deleteReport(req.user.id, id);
+    await this.reportsService.deleteReport(req.user.id, id);
+    return { message: 'Báo cáo đã được xóa thành công' };
   }
 
   // New endpoint to delete individual task

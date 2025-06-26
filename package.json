@@ -28,8 +28,7 @@
     "import:users": "ts-node ./prisma/import-users-from-excel.ts",
     "postinstall": "prisma generate",
     "build:vercel": "prisma generate && nest build",
-    "start:vercel": "node dist/src/main.js",
-    "vercel-build": "prisma generate && npm run build"
+    "start:vercel": "node dist/src/main.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

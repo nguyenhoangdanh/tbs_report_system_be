@@ -19,10 +19,12 @@ export class StatisticsController {
   constructor(private readonly statisticsService: StatisticsService) {}
 
   @Get('dashboard')
-  @ApiOperation({ summary: 'Get dashboard statistics for current user' })
+  @ApiOperation({
+    summary: 'Get dashboard statistics for current user including incomplete task reasons',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Statistics retrieved successfully',
+    description: 'Statistics retrieved successfully with incomplete task analysis',
   })
   async getDashboardStats(@Request() req) {
     return this.statisticsService.getDashboardStats(req.user.id);
@@ -50,20 +52,24 @@ export class StatisticsController {
   }
 
   @Get('user-reports')
-  @ApiOperation({ summary: 'Get user report statistics' })
+  @ApiOperation({
+    summary: 'Get user report statistics with incomplete reasons analysis',
+  })
   @ApiResponse({
     status: 200,
-    description: 'User report statistics retrieved successfully',
+    description: 'User report statistics retrieved successfully with reasons analysis',
   })
   async getUserReportStats(@Request() req) {
     return this.statisticsService.getUserReportStats(req.user.id);
   }
 
   @Get('recent-activities')
-  @ApiOperation({ summary: 'Get recent activities for user' })
+  @ApiOperation({
+    summary: 'Get recent activities for user with incomplete task reasons',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Recent activities retrieved successfully',
+    description: 'Recent activities retrieved successfully with incomplete reasons',
   })
   async getRecentActivities(@Request() req) {
     return this.statisticsService.getRecentActivities(req.user.id);
@@ -139,12 +145,11 @@ export class StatisticsController {
 
   @Get('weekly-task-stats')
   @ApiOperation({
-    summary:
-      'Get weekly completed/uncompleted task statistics for current user',
+    summary: 'Get weekly completed/uncompleted task statistics with reasons analysis',
   })
   @ApiResponse({
     status: 200,
-    description: 'Weekly task stats retrieved successfully',
+    description: 'Weekly task stats retrieved successfully with incomplete reasons',
   })
   async getWeeklyTaskStats(@Request() req) {
     return this.statisticsService.getWeeklyTaskStats(req.user.id);
@@ -152,13 +157,12 @@ export class StatisticsController {
 
   @Get('monthly-task-stats')
   @ApiOperation({
-    summary:
-      'Get monthly completed/uncompleted task statistics for current user',
+    summary: 'Get monthly completed/uncompleted task statistics with top incomplete reasons',
   })
   @ApiQuery({ name: 'year', required: false, description: 'Year' })
   @ApiResponse({
     status: 200,
-    description: 'Monthly task stats retrieved successfully',
+    description: 'Monthly task stats retrieved successfully with reasons breakdown',
   })
   async getMonthlyTaskStats(@Request() req, @Query('year') year?: string) {
     return this.statisticsService.getMonthlyTaskStats(
@@ -169,14 +173,42 @@ export class StatisticsController {
 
   @Get('yearly-task-stats')
   @ApiOperation({
-    summary:
-      'Get yearly completed/uncompleted task statistics for current user',
+    summary: 'Get yearly completed/uncompleted task statistics with comprehensive reasons analysis',
   })
   @ApiResponse({
     status: 200,
-    description: 'Yearly task stats retrieved successfully',
+    description: 'Yearly task stats retrieved successfully with detailed reasons',
   })
   async getYearlyTaskStats(@Request() req) {
     return this.statisticsService.getYearlyTaskStats(req.user.id);
+  }
+
+  @Get('incomplete-reasons-analysis')
+  @ApiOperation({
+    summary: 'Get detailed analysis of incomplete task reasons with filters',
+  })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'Start date for date range filter (ISO string)' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'End date for date range filter (ISO string)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Detailed incomplete reasons analysis retrieved successfully',
+  })
+  async getIncompleteReasonsAnalysis(
+    @Request() req,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const filters: any = {};
+
+    if (weekNumber) filters.weekNumber = parseInt(weekNumber);
+    if (year) filters.year = parseInt(year);
+    if (startDate) filters.startDate = new Date(startDate);
+    if (endDate) filters.endDate = new Date(endDate);
+
+    return this.statisticsService.getIncompleteReasonsAnalysis(req.user.id, filters);
   }
 }

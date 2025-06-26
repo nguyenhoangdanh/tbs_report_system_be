@@ -403,20 +403,18 @@ export class ReportsService {
     return { message: 'Task deleted successfully' };
   }
 
-  async deleteReport(reportId: string, userId: string): Promise<void> {
-    // Find the report
-    const report = await this.prisma.report.findUnique({
-      where: { id: reportId },
+  async deleteReport(userId: string, reportId: string): Promise<void> {
+    // Find the report first to ensure it exists and belongs to user
+    const report = await this.prisma.report.findFirst({
+      where: { 
+        id: reportId,
+        userId: userId // Ensure user owns this report
+      },
       include: { user: true },
     });
 
     if (!report) {
-      throw new NotFoundException('Báo cáo không tồn tại');
-    }
-
-    // Check ownership
-    if (report.userId !== userId) {
-      throw new ForbiddenException('Bạn không có quyền xóa báo cáo này');
+      throw new NotFoundException('Báo cáo không tồn tại hoặc bạn không có quyền xóa');
     }
 
     // Check if report is locked
@@ -435,13 +433,21 @@ export class ReportsService {
 
     if (!isDeletableWeek) {
       throw new ForbiddenException(
-        'Chỉ có thể xóa báo cáo của tuần hiện tại và 1 tuần trước đó',
+        'Chỉ có thể xóa báo cáo của tuần hiện tại, tuần trước và tuần tiếp theo',
       );
     }
 
-    // Delete the report (tasks will be deleted automatically due to cascade)
-    await this.prisma.report.delete({
-      where: { id: reportId },
+    // Use transaction to ensure data consistency
+    await this.prisma.$transaction(async (prisma) => {
+      // Delete all tasks first
+      await prisma.reportTask.deleteMany({
+        where: { reportId },
+      });
+
+      // Then delete the report
+      await prisma.report.delete({
+        where: { id: reportId },
+      });
     });
   }
 
@@ -451,7 +457,7 @@ export class ReportsService {
     currentWeek: number,
     currentYear: number,
   ): boolean {
-    // Can create for current week or next week
+    // Allow creation for previous week, current week, and next week
     const isCurrentWeek = weekNumber === currentWeek && year === currentYear;
     const isNextWeek = this.isNextWeek(
       weekNumber,
@@ -459,8 +465,14 @@ export class ReportsService {
       currentWeek,
       currentYear,
     );
+    const isPreviousWeek = this.isPreviousWeek(
+      weekNumber,
+      year,
+      currentWeek,
+      currentYear,
+    );
 
-    return isCurrentWeek || isNextWeek;
+    return isCurrentWeek || isNextWeek || isPreviousWeek;
   }
 
   private isValidWeekForEdit(
