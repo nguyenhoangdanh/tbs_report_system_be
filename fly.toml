@@ -1,0 +1,62 @@
+# fly.toml app configuration file generated for weekly-report-backend on 2025-06-26T21:27:18+07:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = "weekly-report-backend"
+primary_region = "sin"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false  # Never auto-stop
+  auto_start_machines = true  # Always auto-start
+  min_machines_running = 1    # Always keep at least 1 machine running
+  
+  # Keep connections alive longer
+  keep_alive_timeout = "60s"
+  
+  # Handle more concurrent connections
+  concurrency = { type = "connections", hard_limit = 1000, soft_limit = 800 }
+
+[[http_service.checks]]
+  interval = "15s"
+  grace_period = "5s"
+  method = "GET"
+  path = "/health"
+  protocol = "http"
+  timeout = "10s"
+  tls_skip_verify = false
+  headers = { "User-Agent" = "fly-health-check" }
+
+[[http_service.checks]]
+  interval = "30s"
+  grace_period = "10s" 
+  method = "GET"
+  path = "/api/health"
+  protocol = "http"
+  timeout = "15s"
+  tls_skip_verify = false
+  headers = { "User-Agent" = "fly-health-check" }
+
+# Database health check
+[[http_service.checks]]
+  interval = "60s"
+  grace_period = "15s" 
+  method = "GET"
+  path = "/api/health/db"
+  protocol = "http"
+  timeout = "20s"
+  tls_skip_verify = false
+  headers = { "User-Agent" = "fly-health-check" }
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

@@ -47,7 +47,7 @@ export class UsersService {
       employeeCode,
       jobPositionId,
       officeId,
-      cardId,
+      phone,
       email,
       role,
       ...otherData
@@ -122,13 +122,13 @@ export class UsersService {
       }
     }
 
-    // Check if cardId is already used by another user
-    if (cardId && cardId !== currentUser.cardId) {
+    // Check if phone is already used by another user
+    if (phone && phone !== currentUser.phone) {
       const existingUser = await this.prisma.user.findUnique({
-        where: { cardId },
+        where: { phone },
       });
       if (existingUser && existingUser.id !== userId) {
-        throw new BadRequestException('Card ID is already in use');
+        throw new BadRequestException('Phone number is already in use');
       }
     }
 
@@ -140,7 +140,7 @@ export class UsersService {
     // Add conditional fields
     if (employeeCode !== undefined) updateData.employeeCode = employeeCode;
     if (email !== undefined) updateData.email = email;
-    if (cardId !== undefined) updateData.cardId = cardId;
+    if (phone !== undefined) updateData.phone = phone;
     if (jobPositionId !== undefined) updateData.jobPositionId = jobPositionId;
     if (officeId !== undefined) updateData.officeId = officeId;
     if (role !== undefined) updateData.role = role;

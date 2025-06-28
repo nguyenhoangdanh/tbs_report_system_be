@@ -13,6 +13,7 @@ import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { AuthResponseDto } from './dto/auth-response.dto';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { Response } from 'express';
@@ -35,7 +36,7 @@ export class AuthService {
       password,
       firstName,
       lastName,
-      cardId,
+      phone,
       jobPositionId,
       officeId,
       role,
@@ -63,13 +64,13 @@ export class AuthService {
       }
     }
 
-    // Check if cardId is already used (if provided)
-    if (cardId) {
-      const existingCardId = await this.prisma.user.findUnique({
-        where: { cardId },
+    // Check if phone is already used (if provided)
+    if (phone) {
+      const existingPhone = await this.prisma.user.findUnique({
+        where: { phone },
       });
 
-      if (existingCardId) {
+      if (existingPhone) {
         throw new ConflictException('User with this card ID already exists');
       }
     }
@@ -103,7 +104,7 @@ export class AuthService {
         password: hashedPassword,
         firstName,
         lastName,
-        cardId,
+        phone,
         jobPositionId,
         officeId,
         role,
@@ -126,102 +127,112 @@ export class AuthService {
     };
   }
 
-  async login(loginDto: LoginDto, response: Response, rememberMe = false) {
+  async login(loginDto: LoginDto, response?: Response, rememberMe = false): Promise<AuthResponseDto> {
     const { employeeCode, password } = loginDto;
 
-    // Only log in development
-    if (process.env.NODE_ENV !== 'production') {
-      this.logger.log(`Login attempt for employee: ${employeeCode}`);
-    }
+    try {
+      // Validate input
+      if (!employeeCode || !password) {
+        this.logger.warn(`Login failed: Missing employeeCode or password`);
+        throw new BadRequestException('Employee code and password are required');
+      }
 
-    // Optimized query with selective includes
-    const user = await this.prisma.user.findUnique({
-      where: { employeeCode },
-      include: {
-        office: {
-          select: { id: true, name: true }
-        },
-        jobPosition: {
-          include: {
-            position: {
-              select: { id: true, name: true }
-            },
-            department: {
-              select: { id: true, name: true }
+      // Only log in development
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log(`Login attempt for employee: ${employeeCode}`);
+      }
+
+      // Ensure database connection before query
+      await this.prisma.ensureConnection();
+
+      // Optimized query with selective includes
+      const user = await this.prisma.user.findUnique({
+        where: { employeeCode },
+        include: {
+          office: {
+            select: { id: true, name: true, type: true }
+          },
+          jobPosition: {
+            include: {
+              position: {
+                select: { id: true, name: true, description: true }
+              },
+              department: {
+                select: { id: true, name: true }
+              },
             },
           },
         },
-      },
-    });
+      });
 
-    if (!user || !user.isActive) {
-      if (process.env.NODE_ENV !== 'production') {
-        this.logger.warn(`Login failed for ${employeeCode}: User not found or inactive`);
-      }
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    // Parallel password check and token generation for better performance
-    const [isPasswordValid, tokens] = await Promise.all([
-      bcrypt.compare(password, user.password),
-      this.generateTokens(user.id, user.employeeCode, user.role, rememberMe)
-    ]);
-
-    if (!isPasswordValid) {
-      if (process.env.NODE_ENV !== 'production') {
-        this.logger.warn(`Login failed for ${employeeCode}: Invalid password`);
-      }
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    // Optimized cookie setting
-    const maxAge = rememberMe ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    const cookieOptions = {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' as const : 'lax' as const,
-      maxAge,
-      path: '/',
-    };
-
-    response.cookie('auth-token', tokens.accessToken, cookieOptions);
-
-    // Set CORS headers only in production
-   if (this.envConfig.isProductionEnv) {
-        response.header('Access-Control-Allow-Credentials', 'true');
-        response.header('Access-Control-Allow-Origin', 'https://weeklyreport-orpin.vercel.app'); // Frontend domain
-        response.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie, Set-Cookie');
-        response.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+      if (!user) {
+        if (process.env.NODE_ENV !== 'production') {
+          this.logger.warn(`Login failed for ${employeeCode}: User not found`);
+        }
+        throw new UnauthorizedException('Invalid credentials');
       }
 
-    const { password: _, ...userWithoutPassword } = user;
+      if (!user.isActive) {
+        if (process.env.NODE_ENV !== 'production') {
+          this.logger.warn(`Login failed for ${employeeCode}: User is inactive`);
+        }
+        throw new UnauthorizedException('Account is inactive');
+      }
 
-    if (process.env.NODE_ENV !== 'production') {
-      this.logger.log(`Login successful for ${employeeCode}`);
+      // Check password
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+
+      if (!isPasswordValid) {
+        if (process.env.NODE_ENV !== 'production') {
+          this.logger.warn(`Login failed for ${employeeCode}: Invalid password`);
+        }
+        throw new UnauthorizedException('Invalid credentials');
+      }
+
+      // Generate JWT token
+      const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
+      const access_token = this.jwtService.sign(payload, {
+        expiresIn: rememberMe ? '7d' : '1d'
+      });
+
+      // Set cookie if response object is provided
+      if (response) {
+        this.setAuthCookie(response, access_token, rememberMe);
+      }
+
+      // Return user data without password and convert dates to strings
+      const { password: _, ...userWithoutPassword } = user;
+      const userResponse = {
+        ...userWithoutPassword,
+        createdAt: userWithoutPassword.createdAt.toISOString(),
+        updatedAt: userWithoutPassword.updatedAt.toISOString(),
+      };
+
+      return {
+        access_token,
+        user: userResponse,
+        message: 'Đăng nhập thành công'
+      };
+
+    } catch (error) {
+      // Log the actual error for debugging
+      this.logger.error(`Login error for ${employeeCode}:`, error.message);
+      
+      // Re-throw the error if it's already a proper HTTP exception
+      if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      
+      // For any other error, throw a generic bad request
+      throw new BadRequestException('Login failed. Please check your credentials.');
     }
-
-    return {
-      success: true,
-      user: userWithoutPassword,
-      message: 'Login successful',
-    };
   }
 
   async logout(response: Response) {
     this.logger.log('Logout request received');
 
-    // Simple cookie clearing - same config as setting
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    response.clearCookie('auth-token', {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' as const : 'lax' as const,
-      path: '/',
-      // NO DOMAIN
-    });
+    // Clear auth cookie
+    this.clearAuthCookie(response);
 
     this.logger.log('Auth cookie cleared');
     return { message: 'Logout successful' };
@@ -256,7 +267,7 @@ export class AuthService {
     return { message: 'Password changed successfully' };
   }
 
-  async refreshToken(userId: string, response: Response, rememberMe = false) {
+  async refreshToken(userId: string, response: Response, rememberMe = false): Promise<AuthResponseDto> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -274,31 +285,38 @@ export class AuthService {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    const tokens = await this.generateTokens(
-      user.id,
-      user.employeeCode,
-      user.role,
-      rememberMe,
-    );
+    // Generate new token
+    const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
+    const access_token = this.jwtService.sign(payload, {
+      expiresIn: rememberMe ? '7d' : '1d'
+    });
 
-    // Update cookie with new token - use same simple config
-    this.setAuthCookie(response, tokens.accessToken, rememberMe);
+    // Update cookie with new token
+    this.setAuthCookie(response, access_token, rememberMe);
 
+    // Convert dates to strings
     const { password: _, ...userWithoutPassword } = user;
+    const userResponse = {
+      ...userWithoutPassword,
+      createdAt: userWithoutPassword.createdAt.toISOString(),
+      updatedAt: userWithoutPassword.updatedAt.toISOString(),
+    };
+
     return {
-      user: userWithoutPassword,
+      access_token,
+      user: userResponse,
       message: 'Token refreshed successfully',
     };
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
-    const { employeeCode, cardId } = forgotPasswordDto;
+    const { employeeCode, phone } = forgotPasswordDto;
 
-    // Find user by employeeCode and cardId
+    // Find user by employeeCode and phone
     const user = await this.prisma.user.findFirst({
       where: {
         employeeCode,
-        cardId,
+        phone,
         isActive: true,
       },
       include: {
@@ -314,7 +332,7 @@ export class AuthService {
 
     if (!user) {
       throw new BadRequestException(
-        'Thông tin mã nhân viên và CCCD không khớp hoặc tài khoản không tồn tại',
+        'Thông tin mã nhân viên và Sdt không khớp hoặc tài khoản không tồn tại',
       );
     }
 
@@ -326,26 +344,26 @@ export class AuthService {
         employeeCode: user.employeeCode,
         firstName: user.firstName,
         lastName: user.lastName,
-        email: user.email,
+        phone: user.phone,
       },
     };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
-    const { employeeCode, cardId, newPassword } = resetPasswordDto;
+    const { employeeCode, phone, newPassword } = resetPasswordDto;
 
-    // Verify user again with employeeCode and cardId
+    // Verify user again with employeeCode and phone
     const user = await this.prisma.user.findFirst({
       where: {
         employeeCode,
-        cardId,
+        phone,
         isActive: true,
       },
     });
 
     if (!user) {
       throw new BadRequestException(
-        'Thông tin mã nhân viên và CCCD không khớp hoặc tài khoản không tồn tại',
+        'Thông tin mã nhân viên và Sdt không khớp hoặc tài khoản không tồn tại',
       );
     }
 
@@ -364,33 +382,12 @@ export class AuthService {
     };
   }
 
-  private async generateTokens(
-    userId: string,
-    employeeCode: string,
-    role: Role,
-    rememberMe = false,
-  ) {
-    const payload = {
-      sub: userId,
-      employeeCode,
-      role,
-      iat: Math.floor(Date.now() / 1000),
-    };
-
-    const expiresIn = rememberMe ? '7d' : '1d';
-
-    // Async token generation for better performance
-    const accessToken = await this.jwtService.signAsync(payload, { expiresIn });
-
-    return { accessToken };
-  }
-
   private setAuthCookie(response: Response, token: string, rememberMe = false) {
     const maxAge = rememberMe
-      ? 7 * 24 * 60 * 60 * 1000
-      : 24 * 60 * 60 * 1000;
+      ? 7 * 24 * 60 * 60 * 1000  // 7 days
+      : 24 * 60 * 60 * 1000;     // 1 day
 
-    const isProduction = process.env.NODE_ENV === 'production';
+    const isProduction = this.envConfig.isProduction;
 
     const cookieOptions = {
       httpOnly: true,
@@ -398,33 +395,34 @@ export class AuthService {
       sameSite: isProduction ? 'none' as const : 'lax' as const,
       maxAge,
       path: '/',
-      // NO DOMAIN
+      domain: isProduction ? this.envConfig.cookieDomain || undefined : undefined,
     };
 
     this.logger.log('Setting auth cookie:', {
       tokenLength: token.length,
       maxAge,
-      config: cookieOptions,
+      isProduction,
+      domain: cookieOptions.domain,
+      secure: cookieOptions.secure,
+      sameSite: cookieOptions.sameSite,
     });
 
-    response.cookie('auth-token', token, cookieOptions);
+    response.cookie('access_token', token, cookieOptions);
   }
 
   private clearAuthCookie(response: Response) {
-    const isProduction = process.env.NODE_ENV === 'production';
+    const isProduction = this.envConfig.isProduction;
     
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' as const : 'lax' as const,
       path: '/',
-      maxAge: 0,
-      expires: new Date(0),
-      // NO DOMAIN
+      domain: isProduction ? this.envConfig.cookieDomain || undefined : undefined,
     };
 
-    this.logger.log('Clearing auth cookie:', cookieOptions);
+    this.logger.log('Clearing auth cookie with options:', cookieOptions);
 
-    response.clearCookie('auth-token', cookieOptions);
+    response.clearCookie('access_token', cookieOptions);
   }
 }

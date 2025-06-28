@@ -1,7 +1,7 @@
 generator client {
   provider = "prisma-client-js"
   previewFeatures = ["relationJoins"]
-  binaryTargets = ["native"]
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -78,7 +78,7 @@ model User {
   password      String
   firstName     String
   lastName      String
-  cardId        String?     @unique
+  phone         String    @unique
   role          Role        @default(USER)
   jobPositionId String
   isActive      Boolean     @default(true)

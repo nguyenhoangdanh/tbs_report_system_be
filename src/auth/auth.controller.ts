@@ -25,6 +25,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import { AuthResponseDto } from './dto/auth-response.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -42,30 +43,35 @@ export class AuthController {
   @Post('login')
   @Public()
   @ApiOperation({ summary: 'Login user' })
-  @ApiResponse({ status: 200, description: 'User logged in successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'User logged in successfully',
+    type: AuthResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid input data',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid credentials',
+  })
   @ApiQuery({ name: 'rememberMe', required: false, type: Boolean })
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) response: Response,
     @Query('rememberMe') rememberMe?: boolean,
-  ) {
+  ): Promise<AuthResponseDto> {
     try {
-      console.log(`[AUTH CONTROLLER] Login attempt for: ${loginDto.employeeCode}`);
-      
-      const result = await this.authService.login(loginDto, response, rememberMe || false);
-      
-      console.log(`[AUTH CONTROLLER] Login successful for: ${loginDto.employeeCode}`);
-      
-      // Log response headers for debugging
-      console.log('[AUTH CONTROLLER] Response headers:', {
-        'set-cookie': response.getHeader('set-cookie'),
-        'access-control-allow-credentials': response.getHeader('access-control-allow-credentials'),
-        'access-control-allow-origin': response.getHeader('access-control-allow-origin'),
+      console.log('Login request received:', {
+        employeeCode: loginDto.employeeCode,
+        hasPassword: !!loginDto.password,
+        rememberMe: rememberMe || false,
       });
-      
-      return result;
+
+      return await this.authService.login(loginDto, response, rememberMe || false);
     } catch (error) {
-      console.error(`[AUTH CONTROLLER] Login error for ${loginDto.employeeCode}:`, error.message);
+      console.error('Login controller error:', error);
       throw error;
     }
   }
@@ -75,7 +81,7 @@ export class AuthController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Logout user' })
   @ApiResponse({ status: 200, description: 'User logged out successfully' })
-  logout(@Res({ passthrough: true }) response: Response) {
+  async logout(@Res({ passthrough: true }) response: Response) {
     return this.authService.logout(response);
   }
 
@@ -94,13 +100,17 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Refresh access token' })
-  @ApiResponse({ status: 200, description: 'Token refreshed successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Token refreshed successfully',
+    type: AuthResponseDto,
+  })
   @ApiQuery({ name: 'rememberMe', required: false, type: Boolean })
   refreshToken(
     @GetUser() user: any,
     @Res({ passthrough: true }) response: Response,
     @Query('rememberMe') rememberMe?: boolean,
-  ) {
+  ): Promise<AuthResponseDto> {
     return this.authService.refreshToken(
       user.id,
       response,
@@ -126,52 +136,6 @@ export class AuthController {
     return this.authService.resetPassword(resetPasswordDto);
   }
 
-  @Post('debug-cookie')
-  @Public()
-  @ApiOperation({ summary: 'Debug cookie setting' })
-  debugCookie(@Res({ passthrough: true }) response: Response, @Req() req: any) {
-    const testCookie = 'test-cookie-value-' + Date.now();
-    const origin = req.headers.origin;
-    
-    console.log('[DEBUG] Request origin:', origin);
-    
-    // Set test cookie with EXACT same config as auth cookie
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' as const : 'lax' as const,
-      maxAge: 60000, // 1 minute
-      path: '/',
-    };
-    
-    response.cookie('debug-token', testCookie, cookieOptions);
-    
-    // Set CORS headers based on actual origin
-    if (process.env.NODE_ENV === 'production') {
-      const allowedOrigins = [
-        'https://weeklyreport-orpin.vercel.app', // Frontend domain
-      ];
-      
-      if (origin && allowedOrigins.includes(origin)) {
-        response.header('Access-Control-Allow-Credentials', 'true');
-        response.header('Access-Control-Allow-Origin', origin);
-        response.header('Access-Control-Expose-Headers', 'Set-Cookie');
-      } else {
-        console.log('[DEBUG] Origin not allowed:', origin);
-      }
-    }
-    
-    return {
-      success: true,
-      message: 'Debug cookie set',
-      environment: process.env.NODE_ENV,
-      origin: origin,
-      allowedOrigin: origin === 'https://weeklyreport-orpin.vercel.app',
-      cookieValue: testCookie,
-      cookieOptions,
-    };
-  }
-
   // Test endpoint to check if debug cookie persists
   @Post('check-cookie')
   @Public()
@@ -179,11 +143,11 @@ export class AuthController {
   checkCookie(@Req() req: any) {
     const debugToken = req.cookies['debug-token'];
     const authToken = req.cookies['auth-token'];
-    
+
     console.log('[CHECK] Debug token:', debugToken);
     console.log('[CHECK] Auth token exists:', !!authToken);
     console.log('[CHECK] All cookies:', req.cookies);
-    
+
     return {
       success: true,
       hasDebugToken: !!debugToken,

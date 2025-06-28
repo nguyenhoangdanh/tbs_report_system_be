@@ -1,34 +1,17 @@
 import { Controller, Get } from '@nestjs/common';
-import { AppService } from './app.service';
-import { PrismaService } from './common/prisma.service';
-import { Public } from './common/decorators/public.decorator';
+import { PrismaService } from '../common/prisma.service';
+import { Public } from '../common/decorators/public.decorator';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
-@Controller()
-export class AppController {
-  constructor(
-    private readonly appService: AppService,
-    private readonly prismaService: PrismaService,
-  ) {}
+@ApiTags('health')
+@Controller('health')
+export class HealthController {
+  constructor(private readonly prismaService: PrismaService) {}
 
   @Get()
   @Public()
-  getRoot() {
-    return {
-      message: 'Weekly Work Report API',
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      version: '1.0.0',
-      endpoints: {
-        health: '/health',
-        apiHealth: '/api/health',
-        databaseHealth: '/api/health/db',
-        docs: '/api',
-      },
-    };
-  }
-
-  @Get('health')
-  @Public()
+  @ApiOperation({ summary: 'Basic health check' })
+  @ApiResponse({ status: 200, description: 'API is healthy' })
   getHealth() {
     return {
       status: 'ok',
@@ -41,32 +24,11 @@ export class AppController {
     };
   }
 
-  @Get('api/health')
+  @Get('db')
   @Public()
-  getApiHealth() {
-    return {
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      environment: process.env.NODE_ENV,
-      version: '1.0.0',
-      services: {
-        api: {
-          status: 'operational',
-        },
-      },
-      system: {
-        pid: process.pid,
-        memory: process.memoryUsage(),
-        cpu: process.cpuUsage(),
-        platform: process.platform,
-        nodeVersion: process.version,
-      },
-    };
-  }
-
-  @Get('api/health/db')
-  @Public()
+  @ApiOperation({ summary: 'Database health check' })
+  @ApiResponse({ status: 200, description: 'Database is healthy' })
+  @ApiResponse({ status: 503, description: 'Database is unhealthy' })
   async getDatabaseHealth() {
     try {
       console.log('🔍 Database health check requested');

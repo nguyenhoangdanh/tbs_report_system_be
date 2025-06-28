@@ -12,11 +12,11 @@ export class ResetPasswordDto {
 
   @ApiProperty({
     example: '012345678901',
-    description: 'Citizen ID card number (CCCD)',
+    description: 'Phone number',
   })
   @IsString()
   @IsNotEmpty()
-  cardId: string;
+  phone: string;
 
   @ApiProperty({
     example: 'newpassword123',

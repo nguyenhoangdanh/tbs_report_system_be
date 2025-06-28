@@ -9,6 +9,7 @@ import { PositionsModule } from './positions/positions.module';
 import { JobPositionsModule } from './job-positions/job-positions.module';
 import { ReportsModule } from './reports/reports.module';
 import { StatisticsModule } from './statistics/statistics.module';
+import { HierarchyReportsModule } from './hierarchy-reports/hierarchy-reports.module';
 import { PrismaService } from './common/prisma.service';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { EnvironmentConfig } from './config/config.environment';
@@ -18,10 +19,11 @@ import { AppService } from './app.service';
 import { ScheduleTasksModule } from './schedule/schedule.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
-      // Conditionally serve static files only in development
+    // Conditionally serve static files only in development
     ...(process.env.NODE_ENV !== 'production'
       ? [
           ServeStaticModule.forRoot({
@@ -37,16 +39,19 @@ import { join } from 'path';
         ]
       : []),
 
-    // Config module
+    // Config module với file loading order cải thiện
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath:
-        process.env.NODE_ENV === 'production'
-          ? '.env'
-          : `.env.${process.env.NODE_ENV || 'development'}`,
+      envFilePath: [
+        `.env.${process.env.NODE_ENV || 'development'}`,
+        '.env.local',
+        '.env',
+      ],
+      expandVariables: true,
+      cache: true,
     }),
 
-    // ScheduleModule,
+    // Feature modules
     AuthModule,
     UsersModule,
     OfficesModule,
@@ -57,25 +62,19 @@ import { join } from 'path';
     StatisticsModule,
     ScheduleTasksModule,
     OrganizationsModule,
+    HierarchyReportsModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
-    {
-      provide: PrismaService,
-      useFactory: () => {
-        return process.env.NODE_ENV === 'production' 
-          ? PrismaService.getInstance() 
-          : new PrismaService();
-      },
-      scope: 1, // Singleton
-    },
+    PrismaService,
     EnvironmentConfig,
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
   ],
-  exports: [PrismaService], // Export for other modules
+  exports: [PrismaService],
 })
 export class AppModule {}

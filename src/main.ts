@@ -1,110 +1,88 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, BadRequestException } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { EnvironmentConfig } from './config/config.environment';
 import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
-// Global app instance for Vercel serverless optimization
-let globalApp: NestExpressApplication | undefined;
-
-async function createNestApp(): Promise<NestExpressApplication> {
+async function bootstrap() {
   try {
-    // Reuse app instance in production to avoid cold starts
-    if (process.env.NODE_ENV === 'production' && globalApp) {
-      return globalApp;
+    const nodeEnv = process.env.NODE_ENV || 'development';
+    
+    console.log('🚀 Starting Weekly Report Backend...');
+    console.log(`📍 Environment: ${nodeEnv}`);
+    console.log(`🔗 Database URL configured: ${!!process.env.DATABASE_URL}`);
+    
+    // Debug environment loading
+    console.log('🔍 Environment file loading debug:');
+    console.log(`   NODE_ENV: ${process.env.NODE_ENV}`);
+    console.log(`   Expected env file: .env.${nodeEnv}`);
+    
+    // Log database URL (masked) for debugging
+    if (process.env.DATABASE_URL) {
+      const maskedUrl = process.env.DATABASE_URL.replace(/\/\/.*@/, '//***:***@');
+      console.log(`📡 Database URL: ${maskedUrl}`);
+      
+      // Check if it's pointing to local or production
+      if (maskedUrl.includes('localhost') || maskedUrl.includes('127.0.0.1')) {
+        console.log('✅ Using local database');
+      } else if (maskedUrl.includes('flycast') || maskedUrl.includes('fly.dev')) {
+        console.log('⚠️  Using production database');
+      }
     }
 
     const app = await NestFactory.create<NestExpressApplication>(AppModule, {
       logger: process.env.NODE_ENV === 'production' 
-        ? ['error', 'warn'] 
+        ? ['error', 'warn', 'log'] 
         : ['log', 'error', 'warn', 'debug'],
-      abortOnError: false,
       bufferLogs: true,
     });
 
-    // Essential middleware only
+    // Essential middleware
     app.use(cookieParser());
     app.set('trust proxy', 1);
+    app.enableShutdownHooks();
 
     const envConfig = app.get(EnvironmentConfig);
     const corsConfig = envConfig.getCorsConfig();
 
-    // Enhanced CORS configuration with better logging
-    app.enableCors({
-      ...corsConfig,
-      origin: (origin, callback) => {
-        console.log(`CORS request from origin: ${origin || 'no-origin'}`);
-        
-        if (!origin) {
-          console.log('Allowing request with no origin');
-          return callback(null, true);
-        }
+    // Apply CORS configuration
+    app.enableCors(corsConfig);
 
-        // List of allowed origins
-        const allowedOrigins = [
-          'http://localhost:3000',
-          'http://127.0.0.1:3000',
-          'https://localhost:3000',
-          'https://127.0.0.1:3000',
-          'https://weeklyreport-orpin.vercel.app',
-        ];
+    console.log('✅ CORS configuration applied');
 
-        if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
-          console.log(`Allowing origin: ${origin}`);
-          return callback(null, true);
-        }
-
-        console.warn(`CORS blocked origin: ${origin}`);
-        console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
-        callback(null, true); // Temporarily allow all for debugging
-      },
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: [
-        'Origin',
-        'X-Requested-With',
-        'Content-Type',
-        'Accept',
-        'Authorization',
-        'Cache-Control',
-        'X-HTTP-Method-Override',
-      ],
-      exposedHeaders: ['set-cookie'],
-      optionsSuccessStatus: 200,
-      preflightContinue: false,
-    });
-
-    // Add health check endpoint
-    app.use('/api/health', (req, res) => {
-      res.status(200).json({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        environment: process.env.NODE_ENV,
-        version: '1.0.0'
-      });
-    });
-
-    // Global prefix
+    // Global prefix for API routes
     app.setGlobalPrefix('api');
 
-    // Lightweight validation pipe
+    // More lenient validation pipe to prevent 400 errors
     app.useGlobalPipes(
       new ValidationPipe({
         transform: true,
-        whitelist: true,
-        forbidNonWhitelisted: false,
-        disableErrorMessages: process.env.NODE_ENV === 'production',
+        whitelist: false, // Don't strip unknown properties
+        forbidNonWhitelisted: false, // Don't throw on unknown properties
+        disableErrorMessages: false,
+        skipMissingProperties: false,
+        skipNullProperties: false,
+        skipUndefinedProperties: false,
         transformOptions: {
           enableImplicitConversion: true,
+        },
+        exceptionFactory: (errors) => {
+          console.log('Validation errors:', errors);
+          return new BadRequestException(
+            errors.map(error => ({
+              property: error.property,
+              value: error.value,
+              constraints: error.constraints,
+            }))
+          );
         },
       }),
     );
 
     // Swagger only in development
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV !== 'production') {
       const config = new DocumentBuilder()
         .setTitle('Weekly Work Report API')
         .setDescription('API documentation')
@@ -114,59 +92,45 @@ async function createNestApp(): Promise<NestExpressApplication> {
 
       const document = SwaggerModule.createDocument(app, config);
       SwaggerModule.setup('api', app, document);
+      console.log('📚 Swagger documentation available at /api');
     }
 
-    await app.init();
-
-    // Cache app instance for production
-    if (process.env.NODE_ENV === 'production') {
-      globalApp = app;
-    }
-
-    return app;
-  } catch (error) {
-    console.error('Failed to create NestJS app:', error);
-    throw error;
-  }
-}
-
-async function bootstrap() {
-  try {
-    const app = await createNestApp();
-    const envConfig = app.get(EnvironmentConfig);
     const port = envConfig.port || 8080;
     
     await app.listen(port, '0.0.0.0');
+    
+    console.log(`🎉 Application is running on: http://0.0.0.0:${port}`);
+    console.log(`🏥 Health check: http://0.0.0.0:${port}/health`);
+    console.log(`🔗 API health: http://0.0.0.0:${port}/api/health`);
 
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`🚀 Application running on: http://localhost:${port}/api`);
-    }
   } catch (error) {
-    console.error('Bootstrap error:', error);
+    console.error('❌ Failed to start application:', error);
     process.exit(1);
   }
 }
 
-// Enhanced Vercel handler with better error handling and CORS
+// Enhanced Vercel handler for serverless deployment
 export default async (req: any, res: any) => {
   try {
-    // Set CORS headers immediately for all requests
-    const origin = req.headers.origin;
+    // Set CORS headers for all requests
     const allowedOrigins = [
       'http://localhost:3000',
       'http://127.0.0.1:3000',
-      'https://localhost:3000',
-      'https://127.0.0.1:3000',
       'https://weeklyreportsystem-mu.vercel.app',
+      'https://weeklyreport-orpin.vercel.app',
     ];
 
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
-      res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    const origin = req.headers.origin;
+    
+    if (origin && allowedOrigins.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
     }
     
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,Cache-Control,X-HTTP-Method-Override');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,Cache-Control');
 
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
@@ -174,25 +138,8 @@ export default async (req: any, res: any) => {
       return;
     }
 
-    // Handle static requests quickly
-    if (req.url === '/favicon.ico') {
-      res.status(204).end();
-      return;
-    }
-
-    if (req.url === '/' || req.url === '/api') {
-      res.json({
-        message: 'Weekly Work Report API',
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        docs: '/api',
-        health: '/api/health'
-      });
-      return;
-    }
-
-    // Handle health check
-    if (req.url === '/api/health') {
+    // Quick responses for common requests
+    if (req.url === '/health') {
       res.status(200).json({
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -203,31 +150,46 @@ export default async (req: any, res: any) => {
       return;
     }
 
-    const app = await createNestApp();
-    const expressApp = app.getHttpAdapter().getInstance();
-    
-    return expressApp(req, res);
-  } catch (error) {
-    console.error('Vercel handler error:', error);
-    
-    // Set CORS headers even on error
-    const origin = req.headers?.origin;
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    if (req.url === '/' || req.url === '/api') {
+      res.json({
+        message: 'Weekly Work Report API',
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        docs: '/api',
+        health: '/health'
+      });
+      return;
     }
+
+    // For serverless platforms, create app instance
+    const { AppModule } = await import('./app.module');
+    const { NestFactory } = await import('@nestjs/core');
     
-    // Return proper error response
+    const app = await NestFactory.create(AppModule, {
+      logger: ['error', 'warn'],
+    });
+    
+    app.enableCors({
+      origin: allowedOrigins,
+      credentials: true,
+    });
+    
+    app.setGlobalPrefix('api');
+    
+    const expressApp = app.getHttpAdapter().getInstance();
+    return expressApp(req, res);
+    
+  } catch (error) {
+    console.error('🚨 Handler error:', error);
     res.status(500).json({ 
       error: 'Internal Server Error',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong',
+      message: 'Something went wrong',
       timestamp: new Date().toISOString(),
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
 
-// Local development
+// Start application if running directly
 if (require.main === module) {
   bootstrap();
 }

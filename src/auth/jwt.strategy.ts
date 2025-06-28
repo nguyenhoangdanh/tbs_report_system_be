@@ -15,7 +15,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: ExtractJwt.fromExtractors([
         // First try to extract from cookie
         (request: Request) => {
-          return request?.cookies?.['auth-token'];
+          return request?.cookies?.['access_token'];
         },
         // Fallback to Authorization header
         ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -33,7 +33,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         jobPosition: {
           include: {
             position: true,
-            department: true,
+            department: {
+              select: {
+                id: true,
+                name: true,
+                officeId: true,
+              },
+            },
           },
         },
       },

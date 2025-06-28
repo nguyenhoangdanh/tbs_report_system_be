@@ -12,10 +12,12 @@ export class ForgotPasswordDto {
 
   @ApiProperty({
     example: '012345678901',
-    description: 'Citizen ID card number (CCCD)',
+    description: 'Phone number',
   })
   @IsString()
   @IsNotEmpty()
-  @Length(12, 12, { message: 'Card ID must be exactly 12 digits' })
-  cardId: string;
+  @Length(10, 12, {
+    message: 'Phone number must be between 10 and 12 digits',
+  })
+  phone: string;
 }
