@@ -78,7 +78,17 @@
     
     "dev:setup": "pnpm docker:up && sleep 10 && pnpm db:migrate && pnpm db:seed:dev",
     "dev:full": "pnpm dev:setup && pnpm start:dev",
-    "dev:reset": "pnpm docker:reset && sleep 15 && pnpm db:migrate && pnpm db:seed:dev"
+    "dev:reset": "pnpm docker:reset && sleep 15 && pnpm db:migrate && pnpm db:seed:dev",
+    
+    "db:prod:setup": "./scripts/production-db-setup.sh",
+    "db:prod:generate": "npx prisma generate",
+    "db:prod:migrate": "./scripts/production-db-setup.sh migrate",
+    "db:prod:seed": "./scripts/production-db-setup.sh seed",
+    "db:prod:import": "./scripts/production-db-setup.sh import",
+    "db:prod:reset": "./scripts/production-db-setup.sh reset",
+    "db:prod:full": "./scripts/production-db-setup.sh full",
+    "db:prod:fix": "./scripts/fix-database-connection.sh",
+    "test:login:quick": "./scripts/quick-login-test.sh"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",
