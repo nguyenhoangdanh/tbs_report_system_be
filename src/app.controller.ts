@@ -70,8 +70,15 @@ export class AppController {
   async getDatabaseHealth() {
     try {
       console.log('🔍 Database health check requested');
-      const isHealthy = await this.prismaService.isHealthy();
-      const connectionStatus = await this.prismaService.getConnectionStatus();
+
+      // Get comprehensive database status
+      const [isHealthy, connectionStatus, stats, migrationStatus] =
+        await Promise.all([
+          this.prismaService.isHealthy(),
+          this.prismaService.getConnectionStatus(),
+          this.prismaService.getDatabaseStats().catch(() => null),
+          this.prismaService.getMigrationStatus().catch(() => null),
+        ]);
 
       console.log('📊 Database status:', { isHealthy, connectionStatus });
 
@@ -83,6 +90,8 @@ export class AppController {
             status: 'connected',
             isHealthy: true,
             ...connectionStatus,
+            stats,
+            migrations: migrationStatus,
           },
         };
       } else {
@@ -105,7 +114,46 @@ export class AppController {
           status: 'error',
           isHealthy: false,
           error: error.message,
+          environment: process.env.NODE_ENV,
         },
+      };
+    }
+  }
+
+  @Get('api/health/detailed')
+  @Public()
+  async getDetailedHealth() {
+    try {
+      const [connectionTest, databaseStats, migrationStatus] =
+        await Promise.all([
+          this.prismaService.testConnection(),
+          this.prismaService.getDatabaseStats().catch(() => null),
+          this.prismaService.getMigrationStatus().catch(() => null),
+        ]);
+
+      return {
+        status: connectionTest.success ? 'ok' : 'error',
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV,
+        database: {
+          connection: connectionTest,
+          stats: databaseStats,
+          migrations: migrationStatus,
+        },
+        system: {
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          cpu: process.cpuUsage(),
+          platform: process.platform,
+          nodeVersion: process.version,
+          pid: process.pid,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'error',
+        timestamp: new Date().toISOString(),
+        error: error.message,
       };
     }
   }

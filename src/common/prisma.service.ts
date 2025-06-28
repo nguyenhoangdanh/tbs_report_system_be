@@ -6,6 +6,7 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { EnvironmentConfig } from '../config/config.environment';
 
 @Injectable()
 export class PrismaService
@@ -14,39 +15,39 @@ export class PrismaService
 {
   private readonly logger = new Logger(PrismaService.name);
   private connectionRetries = 0;
-  private maxRetries = 3; // Reduced for faster startup
-  private retryDelay = 2000; // 2 seconds
+  private maxRetries = 5;
+  private retryDelay = 3000;
   private isConnected = false;
 
-  constructor() {
-    const isProduction = process.env.NODE_ENV === 'production';
-    
+  constructor(private envConfig: EnvironmentConfig) {
+    const config = envConfig.getDatabaseConfig();
+
     super({
-      datasources: {
-        db: {
-          url: process.env.DATABASE_URL,
-        },
-      },
-      log: isProduction ? ['error'] : ['error', 'warn'],
-      errorFormat: 'minimal',
-      // Add connection pooling and timeout settings for production
-      ...(isProduction && {
-        transactionOptions: {
-          timeout: 30000, // 30 seconds
-        },
-        // Add SSL configuration for production
-        __internal: {
-          engine: {
-            enableRawQueries: true,
-          },
-        },
-      }),
+      datasources: config.datasources,
+      errorFormat: config.errorFormat,
+      transactionOptions: config.transactionOptions,
+    });
+
+    // Validate database configuration
+    const validation = envConfig.validateDatabaseConfig();
+    if (!validation.isValid) {
+      this.logger.warn('⚠️ Database configuration issues:', validation.errors);
+    }
+
+    // Log connection info
+    const connectionInfo = envConfig.getDatabaseConnectionInfo();
+    this.logger.log(`🔗 Database connection info:`, {
+      environment: connectionInfo.environment,
+      host: connectionInfo.host,
+      port: connectionInfo.port,
+      database: connectionInfo.database,
+      isSSL: connectionInfo.isSSL,
     });
   }
 
   async onModuleInit() {
-    // Don't block app startup on database connection in production
-    if (process.env.NODE_ENV === 'production') {
+    // For production, connect in background to prevent blocking startup
+    if (this.envConfig.isProduction) {
       this.connectAsync();
     } else {
       await this.connectWithRetry();
@@ -54,12 +55,15 @@ export class PrismaService
   }
 
   private async connectAsync() {
-    // Connect in background for production
+    // Connect in background for production to prevent blocking
     setTimeout(async () => {
       try {
         await this.connectWithRetry();
       } catch (error) {
-        this.logger.error('Background database connection failed:', error.message);
+        this.logger.error(
+          'Background database connection failed:',
+          error.message,
+        );
       }
     }, 1000);
   }
@@ -67,65 +71,129 @@ export class PrismaService
   private async connectWithRetry(): Promise<void> {
     while (this.connectionRetries < this.maxRetries) {
       try {
-        this.logger.log(`🔄 Attempting database connection (attempt ${this.connectionRetries + 1}/${this.maxRetries})...`);
-        this.logger.log(`📡 Database URL: ${process.env.DATABASE_URL?.replace(/\/\/.*@/, '//***:***@')}`);
-        
+        this.logger.log(
+          `🔄 Attempting database connection (${
+            this.connectionRetries + 1
+          }/${this.maxRetries})...`,
+        );
+
+        // Log connection details (masked)
+        const maskedUrl = this.envConfig.databaseUrl.replace(
+          /\/\/([^:]+):([^@]+)@/,
+          '//***:***@',
+        );
+        this.logger.log(`📡 Database URL: ${maskedUrl}`);
+        this.logger.log(`🌍 Environment: ${this.envConfig.nodeEnv}`);
+
         // Add timeout to connection attempt
         await Promise.race([
           this.$connect(),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Connection timeout after 10s')), 10000)
-          )
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Connection timeout after 15s')),
+              15000,
+            ),
+          ),
         ]);
-        
-        this.logger.log('✅ Database connected successfully');
-        
-        // Test connection with a simple query with timeout
+
+        // Test with simple query
         await Promise.race([
           this.$queryRaw`SELECT 1 as test`,
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Query timeout after 5s')), 5000)
-          )
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Query timeout after 10s')),
+              10000,
+            ),
+          ),
         ]);
-        
-        this.logger.log('✅ Database query test passed');
-        
+
+        this.logger.log('✅ Database connected successfully');
         this.isConnected = true;
-        this.connectionRetries = 0; // Reset on success
-        
+        this.connectionRetries = 0;
+
+        // Log database info
+        try {
+          const dbInfo = await this.getDatabaseInfo();
+          this.logger.log(
+            `📊 Connected to: ${dbInfo.database} (${dbInfo.version})`,
+          );
+        } catch (error) {
+          this.logger.warn('Could not fetch database info:', error.message);
+        }
+
         return;
       } catch (error) {
         this.connectionRetries++;
         this.isConnected = false;
-        this.logger.error(`❌ Database connection failed (attempt ${this.connectionRetries}):`, error.message);
-        
-        // Log specific TLS errors
-        if (error.message.includes('TLS') || error.message.includes('SSL') || error.message.includes('EOF')) {
-          this.logger.error('🔒 TLS/SSL connection error detected. This might be a Fly.io database connectivity issue.');
-        }
-        
+        this.logger.error(
+          `❌ Connection failed (${this.connectionRetries}/${this.maxRetries}): ${error.message}`,
+        );
+
+        // Enhanced error logging with specific troubleshooting
+        this.logConnectionError(error);
+
         // Disconnect before retry
         try {
           await this.$disconnect();
         } catch (disconnectError) {
           // Ignore disconnect errors
         }
-        
+
         if (this.connectionRetries >= this.maxRetries) {
-          this.logger.error('🚨 Max database connection retries reached');
-          
-          // In production, don't throw - let app start but mark as unhealthy
-          if (process.env.NODE_ENV === 'production') {
-            this.logger.warn('⚠️ Continuing startup without database connection');
+          if (this.envConfig.isProduction) {
+            this.logger.warn(
+              '⚠️ Max retries reached in production, continuing without connection',
+            );
+            this.logger.warn(
+              '🔧 App will start but database operations may fail',
+            );
             return;
           } else {
-            throw new Error(`Failed to connect to database after ${this.maxRetries} attempts: ${error.message}`);
+            throw new Error(
+              `Database connection failed after ${this.maxRetries} attempts: ${error.message}`,
+            );
           }
         }
-        
-        this.logger.log(`⏳ Retrying in ${this.retryDelay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+
+        // Exponential backoff
+        const delay =
+          this.retryDelay * Math.pow(1.5, this.connectionRetries - 1);
+        this.logger.log(`⏳ Retrying in ${delay}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
+    }
+  }
+
+  private logConnectionError(error: any) {
+    if (error.message.includes('ENOTFOUND')) {
+      this.logger.error('🌐 DNS resolution failed');
+      this.logger.error('💡 Check: Database host name is correct');
+    } else if (error.message.includes('ECONNREFUSED')) {
+      this.logger.error('🚪 Connection refused');
+      this.logger.error(
+        '💡 Check: Database server is running and accepting connections',
+      );
+    } else if (error.message.includes('timeout')) {
+      this.logger.error('⏰ Connection timeout');
+      this.logger.error('💡 Check: Network connectivity and firewall settings');
+    } else if (error.message.includes('authentication failed')) {
+      this.logger.error('🔐 Authentication failed');
+      this.logger.error('💡 Check: Username and password are correct');
+    } else if (
+      error.message.includes('TLS') ||
+      error.message.includes('SSL') ||
+      error.message.includes('certificate')
+    ) {
+      this.logger.error('🔒 TLS/SSL error');
+      this.logger.error('💡 Check: SSL configuration and certificates');
+    } else if (
+      error.message.includes('database') &&
+      error.message.includes('does not exist')
+    ) {
+      this.logger.error('🗄️ Database does not exist');
+      this.logger.error('💡 Check: Database name is correct');
+    } else {
+      this.logger.error(`🔍 Unknown error: ${error.message}`);
     }
   }
 
@@ -133,25 +201,24 @@ export class PrismaService
     if (!this.isConnected) {
       await this.connectWithRetry();
     }
-    
+
     try {
       await Promise.race([
         this.$queryRaw`SELECT 1`,
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Query timeout')), 5000)
-        )
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Health check timeout')), 5000),
+        ),
       ]);
     } catch (error) {
-      this.logger.warn('🔄 Database connection lost, attempting to reconnect...');
+      this.logger.warn('🔄 Connection lost, attempting to reconnect...');
       this.isConnected = false;
-      
-      // Disconnect before reconnecting
+
       try {
         await this.$disconnect();
       } catch (disconnectError) {
         // Ignore disconnect errors
       }
-      
+
       await this.connectWithRetry();
     }
   }
@@ -163,7 +230,7 @@ export class PrismaService
       this.isConnected = false;
       this.logger.log('✅ Database disconnected');
     } catch (error) {
-      this.logger.error('❌ Error during database disconnect:', error);
+      this.logger.error('❌ Error during disconnect:', error);
     }
   }
 
@@ -171,9 +238,9 @@ export class PrismaService
     try {
       await Promise.race([
         this.$queryRaw`SELECT 1`,
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Database query timeout')), 5000)
-        )
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Health check timeout')), 5000),
+        ),
       ]);
       return true;
     } catch (error) {
@@ -182,27 +249,187 @@ export class PrismaService
     }
   }
 
+  async getDatabaseInfo(): Promise<{
+    database: string;
+    username: string;
+    version: string;
+    serverTime: Date;
+  }> {
+    const result = (await this.$queryRaw`
+      SELECT 
+        current_database() as database,
+        current_user as username,
+        version() as version,
+        now() as server_time
+    `) as any[];
+
+    return result[0];
+  }
+
   async getConnectionStatus(): Promise<{
     isConnected: boolean;
     lastError?: string;
     retryCount: number;
+    environment: string;
+    databaseInfo?: any;
   }> {
     try {
-      await Promise.race([
-        this.$queryRaw`SELECT current_database(), current_user, version()`,
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection status timeout')), 3000)
-        )
-      ]);
+      const dbInfo = await this.getDatabaseInfo();
+
       return {
         isConnected: true,
         retryCount: this.connectionRetries,
+        environment: this.envConfig.nodeEnv,
+        databaseInfo: dbInfo,
       };
     } catch (error) {
       return {
         isConnected: false,
         lastError: error.message,
         retryCount: this.connectionRetries,
+        environment: this.envConfig.nodeEnv,
+      };
+    }
+  }
+
+  // Enhanced utility methods
+  async getDatabaseStats(): Promise<{
+    totalTables: number;
+    totalRecords: { [tableName: string]: number };
+    databaseSize: string;
+  }> {
+    try {
+      // Get table statistics
+      const tableStats = (await this.$queryRaw`
+        SELECT 
+          schemaname,
+          tablename,
+          n_tup_ins as inserts,
+          n_tup_upd as updates,
+          n_tup_del as deletes,
+          n_live_tup as live_rows
+        FROM pg_stat_user_tables 
+        ORDER BY n_live_tup DESC;
+      `) as any[];
+
+      // Get database size
+      const sizeResult = (await this.$queryRaw`
+        SELECT pg_size_pretty(pg_database_size(current_database())) as size;
+      `) as any[];
+
+      const totalRecords: { [tableName: string]: number } = {};
+
+      for (const table of tableStats) {
+        totalRecords[table.tablename] = parseInt(table.live_rows) || 0;
+      }
+
+      return {
+        totalTables: tableStats.length,
+        totalRecords,
+        databaseSize: sizeResult[0]?.size || 'Unknown',
+      };
+    } catch (error) {
+      this.logger.error('Failed to get database stats:', error.message);
+      return {
+        totalTables: 0,
+        totalRecords: {},
+        databaseSize: 'Unknown',
+      };
+    }
+  }
+
+  async testConnection(): Promise<{
+    success: boolean;
+    latency?: number;
+    error?: string;
+    details?: any;
+  }> {
+    const startTime = Date.now();
+
+    try {
+      const result = await this.$queryRaw`
+        SELECT 
+          1 as test_query,
+          current_timestamp as query_time,
+          current_database() as database,
+          current_user as user
+      `;
+
+      const latency = Date.now() - startTime;
+
+      return {
+        success: true,
+        latency,
+        details: result[0],
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  // Method to check if specific tables exist
+  async checkTableExists(tableName: string): Promise<boolean> {
+    try {
+      const result = (await this.$queryRaw`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name = ${tableName}
+        );
+      `) as any[];
+
+      return result[0]?.exists || false;
+    } catch (error) {
+      this.logger.error(
+        `Failed to check if table ${tableName} exists:`,
+        error.message,
+      );
+      return false;
+    }
+  }
+
+  // Method to get migration status
+  async getMigrationStatus(): Promise<{
+    appliedMigrations: number;
+    pendingMigrations: number;
+    lastMigration?: string;
+  }> {
+    try {
+      // Check if _prisma_migrations table exists
+      const migrationTableExists =
+        await this.checkTableExists('_prisma_migrations');
+
+      if (!migrationTableExists) {
+        return {
+          appliedMigrations: 0,
+          pendingMigrations: 0,
+        };
+      }
+
+      const migrations = (await this.$queryRaw`
+        SELECT 
+          migration_name,
+          applied_steps_count,
+          finished_at
+        FROM _prisma_migrations 
+        ORDER BY started_at DESC;
+      `) as any[];
+
+      const lastMigration = migrations[0];
+
+      return {
+        appliedMigrations: migrations.length,
+        pendingMigrations: 0, // Prisma doesn't expose this easily
+        lastMigration: lastMigration?.migration_name,
+      };
+    } catch (error) {
+      this.logger.error('Failed to get migration status:', error.message);
+      return {
+        appliedMigrations: 0,
+        pendingMigrations: 0,
       };
     }
   }

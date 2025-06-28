@@ -9,33 +9,45 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 async function bootstrap() {
   try {
     const nodeEnv = process.env.NODE_ENV || 'development';
-    
+
     console.log('🚀 Starting Weekly Report Backend...');
     console.log(`📍 Environment: ${nodeEnv}`);
     console.log(`🔗 Database URL configured: ${!!process.env.DATABASE_URL}`);
-    
-    // Debug environment loading
-    console.log('🔍 Environment file loading debug:');
+
+    // Enhanced environment debugging
+    console.log('🔍 Environment configuration:');
     console.log(`   NODE_ENV: ${process.env.NODE_ENV}`);
+    console.log(`   PORT: ${process.env.PORT || '8080'}`);
     console.log(`   Expected env file: .env.${nodeEnv}`);
-    
+
     // Log database URL (masked) for debugging
     if (process.env.DATABASE_URL) {
-      const maskedUrl = process.env.DATABASE_URL.replace(/\/\/.*@/, '//***:***@');
+      const maskedUrl = process.env.DATABASE_URL.replace(
+        /\/\/([^:]+):([^@]+)@/,
+        '//***:***@',
+      );
       console.log(`📡 Database URL: ${maskedUrl}`);
-      
-      // Check if it's pointing to local or production
+
+      // Check database type
       if (maskedUrl.includes('localhost') || maskedUrl.includes('127.0.0.1')) {
-        console.log('✅ Using local database');
-      } else if (maskedUrl.includes('flycast') || maskedUrl.includes('fly.dev')) {
-        console.log('⚠️  Using production database');
+        console.log('✅ Using local database (development)');
+      } else if (
+        maskedUrl.includes('flycast') ||
+        maskedUrl.includes('fly.dev')
+      ) {
+        console.log('🌐 Using production database (Fly.io)');
+      } else {
+        console.log('🔍 Using external database');
       }
+    } else {
+      console.log('❌ DATABASE_URL not configured');
     }
 
     const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-      logger: process.env.NODE_ENV === 'production' 
-        ? ['error', 'warn', 'log'] 
-        : ['log', 'error', 'warn', 'debug'],
+      logger:
+        process.env.NODE_ENV === 'production'
+          ? ['error', 'warn', 'log']
+          : ['log', 'error', 'warn', 'debug'],
       bufferLogs: true,
     });
 
@@ -49,8 +61,8 @@ async function bootstrap() {
 
     // Apply CORS configuration
     app.enableCors(corsConfig);
-
     console.log('✅ CORS configuration applied');
+    console.log(`🌐 Allowed origins: ${envConfig.allowedOrigins.join(', ')}`);
 
     // Global prefix for API routes
     app.setGlobalPrefix('api');
@@ -59,8 +71,8 @@ async function bootstrap() {
     app.useGlobalPipes(
       new ValidationPipe({
         transform: true,
-        whitelist: false, // Don't strip unknown properties
-        forbidNonWhitelisted: false, // Don't throw on unknown properties
+        whitelist: false,
+        forbidNonWhitelisted: false,
         disableErrorMessages: false,
         skipMissingProperties: false,
         skipNullProperties: false,
@@ -71,11 +83,11 @@ async function bootstrap() {
         exceptionFactory: (errors) => {
           console.log('Validation errors:', errors);
           return new BadRequestException(
-            errors.map(error => ({
+            errors.map((error) => ({
               property: error.property,
               value: error.value,
               constraints: error.constraints,
-            }))
+            })),
           );
         },
       }),
@@ -85,24 +97,42 @@ async function bootstrap() {
     if (process.env.NODE_ENV !== 'production') {
       const config = new DocumentBuilder()
         .setTitle('Weekly Work Report API')
-        .setDescription('API documentation')
+        .setDescription('API documentation for Weekly Work Report System')
         .setVersion('1.0')
         .addBearerAuth()
+        .addTag('auth', 'Authentication endpoints')
+        .addTag('users', 'User management')
+        .addTag('reports', 'Weekly reports')
+        .addTag('health', 'Health check endpoints')
         .build();
 
       const document = SwaggerModule.createDocument(app, config);
-      SwaggerModule.setup('api', app, document);
+      SwaggerModule.setup('api', app, document, {
+        customSiteTitle: 'Weekly Report API Documentation',
+        customfavIcon: '/favicon.ico',
+        customJs: [
+          'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui-bundle.min.js',
+          'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui-standalone-preset.min.js',
+        ],
+        customCssUrl: [
+          'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui.min.css',
+        ],
+      });
       console.log('📚 Swagger documentation available at /api');
     }
 
     const port = envConfig.port || 8080;
-    
+
     await app.listen(port, '0.0.0.0');
-    
+
     console.log(`🎉 Application is running on: http://0.0.0.0:${port}`);
     console.log(`🏥 Health check: http://0.0.0.0:${port}/health`);
     console.log(`🔗 API health: http://0.0.0.0:${port}/api/health`);
+    console.log(`📊 Database health: http://0.0.0.0:${port}/api/health/db`);
 
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`📚 API documentation: http://0.0.0.0:${port}/api`);
+    }
   } catch (error) {
     console.error('❌ Failed to start application:', error);
     process.exit(1);
@@ -121,16 +151,22 @@ export default async (req: any, res: any) => {
     ];
 
     const origin = req.headers.origin;
-    
+
     if (origin && allowedOrigins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
     } else {
       res.setHeader('Access-Control-Allow-Origin', '*');
     }
-    
+
     res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,Cache-Control');
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Origin,X-Requested-With,Content-Type,Accept,Authorization,Cache-Control',
+    );
 
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
@@ -145,7 +181,7 @@ export default async (req: any, res: any) => {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         environment: process.env.NODE_ENV,
-        version: '1.0.0'
+        version: '1.0.0',
       });
       return;
     }
@@ -156,7 +192,7 @@ export default async (req: any, res: any) => {
         status: 'ok',
         timestamp: new Date().toISOString(),
         docs: '/api',
-        health: '/health'
+        health: '/health',
       });
       return;
     }
@@ -164,24 +200,23 @@ export default async (req: any, res: any) => {
     // For serverless platforms, create app instance
     const { AppModule } = await import('./app.module');
     const { NestFactory } = await import('@nestjs/core');
-    
+
     const app = await NestFactory.create(AppModule, {
       logger: ['error', 'warn'],
     });
-    
+
     app.enableCors({
       origin: allowedOrigins,
       credentials: true,
     });
-    
+
     app.setGlobalPrefix('api');
-    
+
     const expressApp = app.getHttpAdapter().getInstance();
     return expressApp(req, res);
-    
   } catch (error) {
     console.error('🚨 Handler error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Internal Server Error',
       message: 'Something went wrong',
       timestamp: new Date().toISOString(),

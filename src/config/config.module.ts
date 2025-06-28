@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Module, Global } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import { EnvironmentConfig } from './config.environment';
 
+@Global()
 @Module({
   imports: [
     NestConfigModule.forRoot({
@@ -9,9 +10,10 @@ import { EnvironmentConfig } from './config.environment';
       envFilePath: [
         `.env.${process.env.NODE_ENV || 'development'}`,
         '.env.local',
-        '.env'
+        '.env',
       ],
       expandVariables: true,
+      cache: true,
     }),
   ],
   providers: [EnvironmentConfig],
