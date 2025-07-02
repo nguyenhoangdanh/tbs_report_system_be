@@ -422,9 +422,9 @@ export class ReportsService {
       throw new ForbiddenException('Không thể xóa báo cáo đã bị khóa');
     }
 
-    // Check if week is still deletable
+    // Check if week is still deletable (ONLY current week and next week)
     const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const isDeletableWeek = this.isValidWeekForEdit(
+    const isDeletableWeek = this.isValidWeekForDeletion(
       report.weekNumber,
       report.year,
       currentWeek,
@@ -433,7 +433,7 @@ export class ReportsService {
 
     if (!isDeletableWeek) {
       throw new ForbiddenException(
-        'Chỉ có thể xóa báo cáo của tuần hiện tại, tuần trước và tuần tiếp theo',
+        'Chỉ có thể xóa báo cáo của tuần hiện tại và tuần tiếp theo',
       );
     }
 
@@ -510,7 +510,7 @@ export class ReportsService {
       return weekNumber === currentWeek + 1;
     }
 
-    // Handle year transition (last week of year to first week of next year)
+    // Handle year transition (week 52/53 of current year to week 1 of next year)
     if (year === currentYear + 1 && currentWeek >= 52 && weekNumber === 1) {
       return true;
     }
@@ -529,7 +529,7 @@ export class ReportsService {
       return weekNumber === currentWeek - 1;
     }
 
-    // Handle year transition (first week of year to last week of previous year)
+    // Handle year transition (week 1 of current year to week 52/53 of previous year)
     if (year === currentYear - 1 && currentWeek === 1 && weekNumber >= 52) {
       return true;
     }
@@ -629,14 +629,16 @@ export class ReportsService {
       }),
     ]);
 
+    // FIXED: Report stats completion rate calculation
+    const completionRate = totalReports > 0
+      ? Math.round(((completedReports / totalReports) * 100) * 100) / 100 // 2 decimal places
+      : 0;
+
     return {
       totalReports,
       completedReports,
       pendingReports,
-      completionRate:
-        totalReports > 0
-          ? Math.round((completedReports / totalReports) * 100)
-          : 0,
+      completionRate,
     };
   }
 
@@ -754,5 +756,24 @@ export class ReportsService {
     });
 
     return updatedTask;
+  }
+
+  // Updated method to check if week is valid for deletion (current week and next week only)
+  private isValidWeekForDeletion(
+    weekNumber: number,
+    year: number,
+    currentWeek: number,
+    currentYear: number,
+  ): boolean {
+    // Allow deletion for current week and next week only
+    const isCurrentWeek = weekNumber === currentWeek && year === currentYear;
+    const isNextWeek = this.isNextWeek(
+      weekNumber,
+      year,
+      currentWeek,
+      currentYear,
+    );
+
+    return isCurrentWeek || isNextWeek;
   }
 }

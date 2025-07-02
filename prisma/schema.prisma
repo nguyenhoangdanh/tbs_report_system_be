@@ -152,3 +152,11 @@ enum OfficeType {
   HEAD_OFFICE
   FACTORY_OFFICE
 }
+
+enum EmployeeRanking {
+  EXCELLENT       // Xuất sắc (90-100%)
+  GOOD           // Tốt (80-89%)
+  AVERAGE        // Trung bình (70-79%)
+  BELOW_AVERAGE  // Dưới trung bình (60-69%)
+  POOR           // Kém (< 60%)
+}

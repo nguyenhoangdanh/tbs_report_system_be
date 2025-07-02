@@ -139,7 +139,7 @@ export class AuthService {
 
       // Only log in development
       if (process.env.NODE_ENV !== 'production') {
-        this.logger.log(`Login attempt for employee: ${employeeCode}`);
+        this.logger.log(`Login attempt for employee: ${employeeCode}, rememberMe: ${rememberMe}`);
       }
 
       // Ensure database connection before query
@@ -189,10 +189,10 @@ export class AuthService {
         throw new UnauthorizedException('Invalid credentials');
       }
 
-      // Generate JWT token
+      // Generate JWT token with updated expiration
       const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
       const access_token = this.jwtService.sign(payload, {
-        expiresIn: rememberMe ? '7d' : '1d'
+        expiresIn: rememberMe ? '30d' : '7d'  // Updated: true = 30 days, false = 7 days
       });
 
       // Set cookie if response object is provided
@@ -285,10 +285,10 @@ export class AuthService {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    // Generate new token
+    // Generate new token with updated expiration
     const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
     const access_token = this.jwtService.sign(payload, {
-      expiresIn: rememberMe ? '7d' : '1d'
+      expiresIn: rememberMe ? '30d' : '7d'  // Updated: true = 30 days, false = 7 days
     });
 
     // Update cookie with new token
@@ -383,9 +383,10 @@ export class AuthService {
   }
 
   private setAuthCookie(response: Response, token: string, rememberMe = false) {
+    // Updated cookie duration: false = 7 days, true = 30 days
     const maxAge = rememberMe
-      ? 7 * 24 * 60 * 60 * 1000  // 7 days
-      : 24 * 60 * 60 * 1000;     // 1 day
+      ? 30 * 24 * 60 * 60 * 1000  // 30 days
+      : 7 * 24 * 60 * 60 * 1000;  // 7 days
 
     const isProduction = this.envConfig.isProduction;
 
@@ -401,6 +402,8 @@ export class AuthService {
     this.logger.log('Setting auth cookie:', {
       tokenLength: token.length,
       maxAge,
+      rememberMe,
+      durationDays: rememberMe ? 30 : 7,
       isProduction,
       domain: cookieOptions.domain,
       secure: cookieOptions.secure,

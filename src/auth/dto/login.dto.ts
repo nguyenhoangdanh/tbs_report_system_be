@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class LoginDto {
@@ -11,8 +11,6 @@ export class LoginDto {
   })
   @IsString()
   @IsNotEmpty({ message: 'Employee code is required' })
-  @MinLength(1, { message: 'Employee code cannot be empty' })
-  @MaxLength(50, { message: 'Employee code is too long' })
   @Transform(({ value }) => value?.toString().trim())
   employeeCode: string;
 
@@ -25,4 +23,14 @@ export class LoginDto {
   @IsNotEmpty({ message: 'Password is required' })
   @MinLength(1, { message: 'Password cannot be empty' })
   password: string;
+
+  @ApiProperty({
+    description: 'Remember me option - false: 7 days, true: 30 days',
+    example: true,
+    required: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  rememberMe?: boolean;
 }

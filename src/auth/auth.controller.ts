@@ -56,20 +56,18 @@ export class AuthController {
     status: 401,
     description: 'Unauthorized - Invalid credentials',
   })
-  @ApiQuery({ name: 'rememberMe', required: false, type: Boolean })
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) response: Response,
-    @Query('rememberMe') rememberMe?: boolean,
   ): Promise<AuthResponseDto> {
     try {
       console.log('Login request received:', {
         employeeCode: loginDto.employeeCode,
         hasPassword: !!loginDto.password,
-        rememberMe: rememberMe || false,
+        rememberMe: loginDto.rememberMe || false,
       });
 
-      return await this.authService.login(loginDto, response, rememberMe || false);
+      return await this.authService.login(loginDto, response, loginDto.rememberMe || false);
     } catch (error) {
       console.error('Login controller error:', error);
       throw error;
@@ -105,11 +103,10 @@ export class AuthController {
     description: 'Token refreshed successfully',
     type: AuthResponseDto,
   })
-  @ApiQuery({ name: 'rememberMe', required: false, type: Boolean })
   refreshToken(
     @GetUser() user: any,
     @Res({ passthrough: true }) response: Response,
-    @Query('rememberMe') rememberMe?: boolean,
+    @Body('rememberMe') rememberMe?: boolean,
   ): Promise<AuthResponseDto> {
     return this.authService.refreshToken(
       user.id,

@@ -6,9 +6,9 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { Roles } from 'src/common/decorators/roles.decorator';
-import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { StatisticsService } from './statistics.service';
 
 @ApiTags('Statistics')
@@ -26,29 +26,8 @@ export class StatisticsController {
     status: 200,
     description: 'Statistics retrieved successfully with incomplete task analysis',
   })
-  async getDashboardStats(@Request() req) {
+  async getDashboardStats(@Request() req: any) {
     return this.statisticsService.getDashboardStats(req.user.id);
-  }
-
-  @Get('admin-dashboard')
-  @ApiOperation({ summary: 'Get admin dashboard statistics' })
-  @ApiResponse({
-    status: 200,
-    description: 'Admin statistics retrieved successfully',
-  })
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
-  async getAdminDashboardStats(
-    @Request() req,
-    @Query('departmentId') departmentId?: string,
-    @Query('weekNumber') weekNumber?: number,
-    @Query('year') year?: number,
-  ) {
-    return this.statisticsService.getAdminDashboardStats(req.user, {
-      departmentId,
-      weekNumber,
-      year,
-    });
   }
 
   @Get('user-reports')
@@ -59,7 +38,7 @@ export class StatisticsController {
     status: 200,
     description: 'User report statistics retrieved successfully with reasons analysis',
   })
-  async getUserReportStats(@Request() req) {
+  async getUserReportStats(@Request() req: any) {
     return this.statisticsService.getUserReportStats(req.user.id);
   }
 
@@ -71,8 +50,99 @@ export class StatisticsController {
     status: 200,
     description: 'Recent activities retrieved successfully with incomplete reasons',
   })
-  async getRecentActivities(@Request() req) {
+  async getRecentActivities(@Request() req: any) {
     return this.statisticsService.getRecentActivities(req.user.id);
+  }
+
+  @Get('weekly-task-stats')
+  @ApiOperation({
+    summary: 'Get weekly completed/uncompleted task statistics with reasons analysis',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Weekly task stats retrieved successfully with incomplete reasons',
+  })
+  async getWeeklyTaskStats(@Request() req: any) {
+    return this.statisticsService.getWeeklyTaskStats(req.user.id);
+  }
+
+  @Get('monthly-task-stats')
+  @ApiOperation({
+    summary: 'Get monthly completed/uncompleted task statistics with top incomplete reasons',
+  })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @ApiResponse({
+    status: 200,
+    description: 'Monthly task stats retrieved successfully with reasons breakdown',
+  })
+  async getMonthlyTaskStats(@Request() req: any, @Query('year') year?: string) {
+    return this.statisticsService.getMonthlyTaskStats(
+      req.user.id,
+      year ? parseInt(year) : undefined,
+    );
+  }
+
+  @Get('yearly-task-stats')
+  @ApiOperation({
+    summary: 'Get yearly completed/uncompleted task statistics with comprehensive reasons analysis',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Yearly task stats retrieved successfully with detailed reasons',
+  })
+  async getYearlyTaskStats(@Request() req: any) {
+    return this.statisticsService.getYearlyTaskStats(req.user.id);
+  }
+
+  @Get('incomplete-reasons-analysis')
+  @ApiOperation({
+    summary: 'Get detailed analysis of incomplete task reasons with filters',
+  })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'Start date for date range filter (ISO string)' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'End date for date range filter (ISO string)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Detailed incomplete reasons analysis retrieved successfully',
+  })
+  async getIncompleteReasonsAnalysis(
+    @Request() req: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const filters: any = {};
+
+    if (weekNumber) filters.weekNumber = parseInt(weekNumber);
+    if (year) filters.year = parseInt(year);
+    if (startDate) filters.startDate = new Date(startDate);
+    if (endDate) filters.endDate = new Date(endDate);
+
+    return this.statisticsService.getIncompleteReasonsAnalysis(req.user.id, filters);
+  }
+
+  // Admin endpoints - delegate to HierarchyReportsService
+  @Get('admin-dashboard')
+  @ApiOperation({ summary: 'Get admin dashboard statistics' })
+  @ApiResponse({
+    status: 200,
+    description: 'Admin statistics retrieved successfully',
+  })
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  async getAdminDashboardStats(
+    @Request() req: any,
+    @Query('departmentId') departmentId?: string,
+    @Query('weekNumber') weekNumber?: number,
+    @Query('year') year?: number,
+  ) {
+    return this.statisticsService.getAdminDashboardStats(req.user, {
+      departmentId,
+      weekNumber,
+      year,
+    });
   }
 
   @Get('overview')
@@ -141,74 +211,5 @@ export class StatisticsController {
       week: week ? parseInt(week) : undefined,
       year: year ? parseInt(year) : undefined,
     });
-  }
-
-  @Get('weekly-task-stats')
-  @ApiOperation({
-    summary: 'Get weekly completed/uncompleted task statistics with reasons analysis',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Weekly task stats retrieved successfully with incomplete reasons',
-  })
-  async getWeeklyTaskStats(@Request() req) {
-    return this.statisticsService.getWeeklyTaskStats(req.user.id);
-  }
-
-  @Get('monthly-task-stats')
-  @ApiOperation({
-    summary: 'Get monthly completed/uncompleted task statistics with top incomplete reasons',
-  })
-  @ApiQuery({ name: 'year', required: false, description: 'Year' })
-  @ApiResponse({
-    status: 200,
-    description: 'Monthly task stats retrieved successfully with reasons breakdown',
-  })
-  async getMonthlyTaskStats(@Request() req, @Query('year') year?: string) {
-    return this.statisticsService.getMonthlyTaskStats(
-      req.user.id,
-      year ? parseInt(year) : undefined,
-    );
-  }
-
-  @Get('yearly-task-stats')
-  @ApiOperation({
-    summary: 'Get yearly completed/uncompleted task statistics with comprehensive reasons analysis',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Yearly task stats retrieved successfully with detailed reasons',
-  })
-  async getYearlyTaskStats(@Request() req) {
-    return this.statisticsService.getYearlyTaskStats(req.user.id);
-  }
-
-  @Get('incomplete-reasons-analysis')
-  @ApiOperation({
-    summary: 'Get detailed analysis of incomplete task reasons with filters',
-  })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiQuery({ name: 'startDate', required: false, description: 'Start date for date range filter (ISO string)' })
-  @ApiQuery({ name: 'endDate', required: false, description: 'End date for date range filter (ISO string)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Detailed incomplete reasons analysis retrieved successfully',
-  })
-  async getIncompleteReasonsAnalysis(
-    @Request() req,
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-  ) {
-    const filters: any = {};
-
-    if (weekNumber) filters.weekNumber = parseInt(weekNumber);
-    if (year) filters.year = parseInt(year);
-    if (startDate) filters.startDate = new Date(startDate);
-    if (endDate) filters.endDate = new Date(endDate);
-
-    return this.statisticsService.getIncompleteReasonsAnalysis(req.user.id, filters);
   }
 }

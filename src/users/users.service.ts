@@ -298,4 +298,85 @@ export class UsersService {
       ],
     });
   }
+
+  async getUsersWithRankingData(filters: any) {
+    const users = await this.prisma.user.findMany({
+      where: { isActive: true },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: {
+              include: {
+                office: true,
+              },
+            },
+          },
+        },
+        reports: {
+          where: filters.reportFilters || {},
+          include: {
+            tasks: {
+              select: {
+                isCompleted: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { office: { name: 'asc' } },
+        { jobPosition: { department: { name: 'asc' } } },
+        { lastName: 'asc' },
+        { firstName: 'asc' },
+      ],
+    });
+
+    // Calculate ranking for each user
+    return users.map(user => {
+      const totalTasks = user.reports.reduce((sum, report) => sum + report.tasks.length, 0);
+      const completedTasks = user.reports.reduce(
+        (sum, report) => sum + report.tasks.filter(task => task.isCompleted).length, 
+        0
+      );
+      
+      const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+      const ranking = this.calculateEmployeeRanking(completionRate);
+      
+      const { reports, ...userWithoutReports } = user;
+      
+      return {
+        ...userWithoutReports,
+        performance: {
+          totalReports: user.reports.length,
+          totalTasks,
+          completedTasks,
+          completionRate,
+          ranking,
+          rankingLabel: this.getRankingLabel(ranking),
+        },
+      };
+    });
+  }
+
+  // Helper methods for ranking calculations
+  private calculateEmployeeRanking(completionRate: number): string {
+    if (completionRate >= 90) return 'EXCELLENT';
+    if (completionRate >= 80) return 'GOOD';
+    if (completionRate >= 70) return 'AVERAGE';
+    if (completionRate >= 60) return 'BELOW_AVERAGE';
+    return 'POOR';
+  }
+
+  private getRankingLabel(ranking: string): string {
+    const labels = {
+      'EXCELLENT': 'Xuất sắc',
+      'GOOD': 'Tốt',
+      'AVERAGE': 'Trung bình',
+      'BELOW_AVERAGE': 'Dưới trung bình',
+      'POOR': 'Kém'
+    };
+    return labels[ranking] || 'Chưa xếp loại';
+  }
 }

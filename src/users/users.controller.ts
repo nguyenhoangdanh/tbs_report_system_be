@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Query,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -15,7 +16,8 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { getCurrentWeek } from '../common/utils/week-utils';
 
 @ApiTags('users')
 @Controller('users')
@@ -85,5 +87,55 @@ export class UsersController {
   @ApiOperation({ summary: 'Get all users (superadmin only)' })
   async getAllUsers() {
     return this.usersService.getAllUsers();
+  }
+
+  @Get('with-ranking')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER)
+  @ApiOperation({ summary: 'Get users with ranking data' })
+  @ApiQuery({
+    name: 'weekNumber',
+    required: false,
+    description: 'Filter by week number',
+  })
+  @ApiQuery({ name: 'year', required: false, description: 'Filter by year' })
+  @ApiQuery({
+    name: 'periodWeeks',
+    required: false,
+    description: 'Number of weeks for analysis',
+  })
+  async getUsersWithRankingData(
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+    @Query('periodWeeks') periodWeeks?: string,
+  ) {
+    const filters: any = {};
+
+    if (weekNumber || year || periodWeeks) {
+      const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
+      const targetWeek = parseInt(weekNumber) || currentWeek;
+      const targetYear = parseInt(year) || currentYear;
+      const weeks = parseInt(periodWeeks) || 4;
+
+      // Generate week ranges for report filtering
+      const weekRanges = [];
+      for (let i = 0; i < weeks; i++) {
+        let week = targetWeek - i;
+        let reportYear = targetYear;
+
+        if (week <= 0) {
+          week = 52 + week;
+          reportYear = targetYear - 1;
+        }
+
+        weekRanges.push({ weekNumber: week, year: reportYear });
+      }
+
+      filters.reportFilters = {
+        OR: weekRanges.map(({ weekNumber, year }) => ({ weekNumber, year })),
+      };
+    }
+
+    return this.usersService.getUsersWithRankingData(filters);
   }
 }

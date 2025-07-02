@@ -20,6 +20,7 @@ import { ScheduleTasksModule } from './schedule/schedule.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { HealthModule } from './health/health.module';
+import { RankingModule } from './ranking/ranking.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { HealthModule } from './health/health.module';
     OrganizationsModule,
     HierarchyReportsModule,
     HealthModule,
+    RankingModule,
   ],
   controllers: [AppController],
   providers: [

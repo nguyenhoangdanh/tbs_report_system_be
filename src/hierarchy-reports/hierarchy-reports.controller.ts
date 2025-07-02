@@ -1,19 +1,5 @@
-import {
-  Controller,
-  Get,
-  Query,
-  Param,
-  UseGuards,
-  Req,
-  ForbiddenException,
-} from '@nestjs/common';
-import {
-  ApiTags,
-  ApiBearerAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiQuery,
-} from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -143,23 +129,11 @@ export class HierarchyReportsController {
     @Query('departmentId') departmentId?: string,
     @Query('weeks') weeks?: string,
   ) {
-    // Validate role-based access for filters
-    if (officeId && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
-      throw new ForbiddenException('Only ADMIN/SUPERADMIN can filter by office');
-    }
-    
-    if (departmentId && !['ADMIN', 'SUPERADMIN', 'OFFICE_MANAGER'].includes(req.user.role)) {
-      throw new ForbiddenException('Insufficient permissions to filter by department');
-    }
-
-    return this.hierarchyReportsService.getTaskCompletionTrends(
-      req.user,
-      {
-        officeId,
-        departmentId,
-        weeks: weeks ? parseInt(weeks) : 8,
-      },
-    );
+    return this.hierarchyReportsService.getTaskCompletionTrends(req.user, {
+      officeId,
+      departmentId,
+      weeks: weeks ? parseInt(weeks) : 8,
+    });
   }
 
   @Get('incomplete-reasons-hierarchy')
@@ -178,24 +152,12 @@ export class HierarchyReportsController {
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
   ) {
-    // Validate role-based access for filters
-    if (officeId && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
-      throw new ForbiddenException('Only ADMIN/SUPERADMIN can filter by office');
-    }
-    
-    if (departmentId && !['ADMIN', 'SUPERADMIN', 'OFFICE_MANAGER'].includes(req.user.role)) {
-      throw new ForbiddenException('Insufficient permissions to filter by department');
-    }
-
-    return this.hierarchyReportsService.getIncompleteReasonsHierarchy(
-      req.user,
-      {
-        officeId,
-        departmentId,
-        weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
-        year: year ? parseInt(year) : undefined,
-      },
-    );
+    return this.hierarchyReportsService.getIncompleteReasonsHierarchy(req.user, {
+      officeId,
+      departmentId,
+      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
+      year: year ? parseInt(year) : undefined,
+    });
   }
 
   @Get('admin/user/:userId/reports')
@@ -215,16 +177,12 @@ export class HierarchyReportsController {
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
   ) {
-    return this.hierarchyReportsService.getUserReportsForAdmin(
-      userId,
-      req.user,
-      {
-        page: page ? parseInt(page) : 1,
-        limit: limit ? parseInt(limit) : 10,
-        weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
-        year: year ? parseInt(year) : undefined,
-      },
-    );
+    return this.hierarchyReportsService.getUserReportsForAdmin(userId, req.user, {
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 10,
+      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
+      year: year ? parseInt(year) : undefined,
+    });
   }
 
   @Get('admin/user/:userId/report/:reportId')
@@ -237,10 +195,99 @@ export class HierarchyReportsController {
     @Param('reportId') reportId: string,
     @Req() req: any,
   ) {
-    return this.hierarchyReportsService.getReportDetailsForAdmin(
-      userId,
-      reportId,
-      req.user,
-    );
+    return this.hierarchyReportsService.getReportDetailsForAdmin(userId, reportId, req.user);
+  }
+
+  @Get('employees-without-reports')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
+  @ApiOperation({ summary: 'Get list of employees who have not submitted reports' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
+  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office (Admin/Superadmin only)' })
+  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
+  @ApiResponse({ status: 200, description: 'Employees without reports retrieved successfully' })
+  async getEmployeesWithoutReports(
+    @Req() req: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+    @Query('officeId') officeId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.hierarchyReportsService.getEmployeesWithoutReports(req.user, {
+      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
+      year: year ? parseInt(year) : undefined,
+      officeId,
+      departmentId,
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 20,
+    });
+  }
+
+  @Get('employees-incomplete-reports')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
+  @ApiOperation({ summary: 'Get list of employees with incomplete reports' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
+  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office (Admin/Superadmin only)' })
+  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
+  @ApiResponse({ status: 200, description: 'Employees with incomplete reports retrieved successfully' })
+  async getEmployeesWithIncompleteReports(
+    @Req() req: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+    @Query('officeId') officeId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.hierarchyReportsService.getEmployeesWithIncompleteReports(req.user, {
+      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
+      year: year ? parseInt(year) : undefined,
+      officeId,
+      departmentId,
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 20,
+    });
+  }
+
+  @Get('employees-reporting-status')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
+  @ApiOperation({ summary: 'Get comprehensive reporting status of all employees' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
+  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office (Admin/Superadmin only)' })
+  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
+  @ApiQuery({ name: 'status', required: false, description: 'Filter by status: not_submitted, incomplete, completed, all' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
+  @ApiResponse({ status: 200, description: 'Employee reporting status retrieved successfully' })
+  async getEmployeesReportingStatus(
+    @Req() req: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+    @Query('officeId') officeId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('status') status?: 'not_submitted' | 'incomplete' | 'completed' | 'all',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.hierarchyReportsService.getEmployeesReportingStatus(req.user, {
+      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
+      year: year ? parseInt(year) : undefined,
+      officeId,
+      departmentId,
+      status,
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 20,
+    });
   }
 }
