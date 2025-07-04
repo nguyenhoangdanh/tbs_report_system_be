@@ -18,6 +18,7 @@ export class PrismaService
   private maxRetries = 5;
   private retryDelay = 3000;
   private isConnected = false;
+  private isConnecting = false; // Prevent multiple concurrent connections
 
   constructor(private envConfig: EnvironmentConfig) {
     const config = envConfig.getDatabaseConfig();
@@ -26,15 +27,17 @@ export class PrismaService
       datasources: config.datasources,
       errorFormat: config.errorFormat,
       transactionOptions: config.transactionOptions,
+      log: process.env.NODE_ENV === 'production' 
+        ? [{ emit: 'event', level: 'error' }, { emit: 'event', level: 'warn' }]
+        : [
+            { emit: 'event', level: 'query' },
+            { emit: 'event', level: 'error' },
+            { emit: 'event', level: 'info' },
+            { emit: 'event', level: 'warn' },
+          ],
     });
 
-    // Validate database configuration
-    const validation = envConfig.validateDatabaseConfig();
-    if (!validation.isValid) {
-      this.logger.warn('⚠️ Database configuration issues:', validation.errors);
-    }
-
-    // Log connection info
+    // Log connection info only once
     const connectionInfo = envConfig.getDatabaseConnectionInfo();
     this.logger.log(`🔗 Database connection info:`, {
       environment: connectionInfo.environment,
@@ -46,6 +49,11 @@ export class PrismaService
   }
 
   async onModuleInit() {
+    // Prevent multiple initialization
+    if (this.isConnecting || this.isConnected) {
+      return;
+    }
+
     // For production, connect in background to prevent blocking startup
     if (this.envConfig.isProduction) {
       this.connectAsync();
@@ -55,6 +63,13 @@ export class PrismaService
   }
 
   private async connectAsync() {
+    // Prevent multiple async connections
+    if (this.isConnecting) {
+      return;
+    }
+
+    this.isConnecting = true;
+    
     // Connect in background for production to prevent blocking
     setTimeout(async () => {
       try {
@@ -64,103 +79,120 @@ export class PrismaService
           'Background database connection failed:',
           error.message,
         );
+      } finally {
+        this.isConnecting = false;
       }
     }, 1000);
   }
 
   private async connectWithRetry(): Promise<void> {
-    while (this.connectionRetries < this.maxRetries) {
-      try {
-        this.logger.log(
-          `🔄 Attempting database connection (${
-            this.connectionRetries + 1
-          }/${this.maxRetries})...`,
-        );
+    // Prevent multiple concurrent connection attempts
+    if (this.isConnecting || this.isConnected) {
+      return;
+    }
 
-        // Log connection details (masked)
-        const maskedUrl = this.envConfig.databaseUrl.replace(
-          /\/\/([^:]+):([^@]+)@/,
-          '//***:***@',
-        );
-        this.logger.log(`📡 Database URL: ${maskedUrl}`);
-        this.logger.log(`🌍 Environment: ${this.envConfig.nodeEnv}`);
+    this.isConnecting = true;
 
-        // Add timeout to connection attempt
-        await Promise.race([
-          this.$connect(),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Connection timeout after 15s')),
-              15000,
-            ),
-          ),
-        ]);
-
-        // Test with simple query
-        await Promise.race([
-          this.$queryRaw`SELECT 1 as test`,
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Query timeout after 10s')),
-              10000,
-            ),
-          ),
-        ]);
-
-        this.logger.log('✅ Database connected successfully');
-        this.isConnected = true;
-        this.connectionRetries = 0;
-
-        // Log database info
+    try {
+      while (this.connectionRetries < this.maxRetries && !this.isConnected) {
         try {
-          const dbInfo = await this.getDatabaseInfo();
           this.logger.log(
-            `📊 Connected to: ${dbInfo.database} (${dbInfo.version})`,
+            `🔄 Attempting database connection (${
+              this.connectionRetries + 1
+            }/${this.maxRetries})...`,
           );
-        } catch (error) {
-          this.logger.warn('Could not fetch database info:', error.message);
-        }
 
-        return;
-      } catch (error) {
-        this.connectionRetries++;
-        this.isConnected = false;
-        this.logger.error(
-          `❌ Connection failed (${this.connectionRetries}/${this.maxRetries}): ${error.message}`,
-        );
-
-        // Enhanced error logging with specific troubleshooting
-        this.logConnectionError(error);
-
-        // Disconnect before retry
-        try {
-          await this.$disconnect();
-        } catch (disconnectError) {
-          // Ignore disconnect errors
-        }
-
-        if (this.connectionRetries >= this.maxRetries) {
-          if (this.envConfig.isProduction) {
-            this.logger.warn(
-              '⚠️ Max retries reached in production, continuing without connection',
+          // Log connection details (masked) - only once per attempt
+          if (this.connectionRetries === 0) {
+            const maskedUrl = this.envConfig.databaseUrl.replace(
+              /\/\/([^:]+):([^@]+)@/,
+              '//***:***@',
             );
-            this.logger.warn(
-              '🔧 App will start but database operations may fail',
-            );
-            return;
-          } else {
-            throw new Error(
-              `Database connection failed after ${this.maxRetries} attempts: ${error.message}`,
-            );
+            this.logger.log(`📡 Database URL: ${maskedUrl}`);
+            this.logger.log(`🌍 Environment: ${this.envConfig.nodeEnv}`);
           }
-        }
 
-        // Exponential backoff
-        const delay =
-          this.retryDelay * Math.pow(1.5, this.connectionRetries - 1);
-        this.logger.log(`⏳ Retrying in ${delay}ms...`);
-        await new Promise((resolve) => setTimeout(resolve, delay));
+          // Add timeout to connection attempt
+          await Promise.race([
+            this.$connect(),
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error('Connection timeout after 15s')),
+                15000,
+              ),
+            ),
+          ]);
+
+          // Test with simple query
+          await Promise.race([
+            this.$queryRaw`SELECT 1 as test`,
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error('Query timeout after 10s')),
+                10000,
+              ),
+            ),
+          ]);
+
+          this.logger.log('✅ Database connected successfully');
+          this.isConnected = true;
+          this.connectionRetries = 0;
+
+          // Log database info only once
+          try {
+            const dbInfo = await this.getDatabaseInfo();
+            this.logger.log(
+              `📊 Connected to: ${dbInfo.database} (${dbInfo.version})`,
+            );
+          } catch (error) {
+            this.logger.warn('Could not fetch database info:', error.message);
+          }
+
+          return;
+        } catch (error) {
+          this.connectionRetries++;
+          this.logger.error(
+            `❌ Connection failed (${this.connectionRetries}/${this.maxRetries}): ${error.message}`,
+          );
+
+          // Enhanced error logging with specific troubleshooting
+          this.logConnectionError(error);
+
+          // Disconnect before retry
+          try {
+            await this.$disconnect();
+          } catch (disconnectError) {
+            // Ignore disconnect errors
+          }
+
+          if (this.connectionRetries >= this.maxRetries) {
+            if (this.envConfig.isProduction) {
+              this.logger.warn(
+                '⚠️ Max retries reached in production, continuing without connection',
+              );
+              this.logger.warn(
+                '🔧 App will start but database operations may fail',
+              );
+              return;
+            } else {
+              throw new Error(
+                `Database connection failed after ${this.maxRetries} attempts: ${error.message}`,
+              );
+            }
+          }
+
+          // Exponential backoff with jitter
+          const delay = Math.min(
+            this.retryDelay * Math.pow(1.5, this.connectionRetries - 1) + 
+            Math.random() * 1000, // Add jitter
+            30000 // Max 30 seconds
+          );
+          this.logger.log(`⏳ Retrying in ${Math.round(delay)}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
+    } finally {
+      this.isConnecting = false;
     }
   }
 
@@ -292,7 +324,6 @@ export class PrismaService
     }
   }
 
-  // Enhanced utility methods
   async getDatabaseStats(): Promise<{
     totalTables: number;
     totalRecords: { [tableName: string]: number };
@@ -370,7 +401,6 @@ export class PrismaService
     }
   }
 
-  // Method to check if specific tables exist
   async checkTableExists(tableName: string): Promise<boolean> {
     try {
       const result = (await this.$queryRaw`
@@ -391,7 +421,6 @@ export class PrismaService
     }
   }
 
-  // Method to get migration status
   async getMigrationStatus(): Promise<{
     appliedMigrations: number;
     pendingMigrations: number;

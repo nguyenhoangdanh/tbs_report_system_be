@@ -244,6 +244,7 @@ export class StatisticsService {
             taskName: true,
             isCompleted: true,
             reasonNotDone: true,
+            updatedAt: true,
           },
         },
       },

@@ -191,10 +191,10 @@ export class HierarchyReportsService {
             usersWithoutReports: allUsers.length - usersWithReports.length,
             totalTasks,
             completedTasks,
-            // Fixed percentage calculations
+            // Fixed percentage calculations - use actual numbers, not office averages
             reportSubmissionRate: this.calculatePercentage(usersWithReports.length, allUsers.length),
             reportCompletionRate: this.calculatePercentage(usersWithCompletedReports.length, usersWithReports.length),
-            taskCompletionRate: officeTaskCompletionRate, // Backend calculated
+            taskCompletionRate: officeTaskCompletionRate,
             topIncompleteReasons,
           },
         };
@@ -204,12 +204,12 @@ export class HierarchyReportsService {
       const officeCompletionRates = officesStats.map(office => office.stats.taskCompletionRate);
       const officeRankingDistribution = this.calculateRankingDistribution(officeCompletionRates);
 
-      // Calculate overall average weighted by number of users in each office
+      // Calculate overall totals (not averages)
       const totalUsers = officesStats.reduce((sum, office) => sum + office.stats.totalUsers, 0);
-      const weightedCompletionSum = officesStats.reduce((sum, office) => {
-        return sum + (office.stats.taskCompletionRate * office.stats.totalUsers);
-      }, 0);
-      const overallAverageCompletionRate = totalUsers > 0 ? Math.round(weightedCompletionSum / totalUsers) : 0;
+      const totalUsersWithReports = officesStats.reduce((sum, office) => sum + office.stats.usersWithReports, 0);
+      const totalUsersWithCompletedReports = officesStats.reduce((sum, office) => sum + office.stats.usersWithCompletedReports, 0);
+      const totalTasks = officesStats.reduce((sum, office) => sum + office.stats.totalTasks, 0);
+      const totalCompletedTasks = officesStats.reduce((sum, office) => sum + office.stats.completedTasks, 0);
 
       return {
         weekNumber: targetWeek,
@@ -218,17 +218,14 @@ export class HierarchyReportsService {
         summary: {
           totalOffices: sortedOffices.length,
           totalDepartments: officesStats.reduce((sum, office) => sum + office.stats.totalDepartments, 0),
-          totalUsers: officesStats.reduce((sum, office) => sum + office.stats.totalUsers, 0),
-          totalUsersWithReports: officesStats.reduce((sum, office) => sum + office.stats.usersWithReports, 0),
-          totalUsersWithCompletedReports: officesStats.reduce((sum, office) => sum + office.stats.usersWithCompletedReports, 0),
-          totalUsersWithoutReports: officesStats.reduce((sum, office) => sum + office.stats.usersWithoutReports, 0),
-          // Use weighted average for more accurate overall performance
-          averageSubmissionRate: this.calculatePercentage(
-            officesStats.reduce((sum, office) => sum + office.stats.usersWithReports, 0),
-            officesStats.reduce((sum, office) => sum + office.stats.totalUsers, 0)
-          ),
-          averageCompletionRate: overallAverageCompletionRate, // Weighted average from backend
-          rankingDistribution: officeRankingDistribution, // Add ranking distribution
+          totalUsers,
+          totalUsersWithReports,
+          totalUsersWithCompletedReports,
+          totalUsersWithoutReports: totalUsers - totalUsersWithReports,
+          // Fixed: Calculate actual percentages from total numbers, not office averages
+          averageSubmissionRate: this.calculatePercentage(totalUsersWithReports, totalUsers),
+          averageCompletionRate: this.calculatePercentage(totalCompletedTasks, totalTasks),
+          rankingDistribution: officeRankingDistribution,
         },
       };
     } catch (error) {
@@ -393,12 +390,12 @@ export class HierarchyReportsService {
       const departmentCompletionRates = departmentStats.map(dept => dept.stats.taskCompletionRate);
       const departmentRankingDistribution = this.calculateRankingDistribution(departmentCompletionRates);
 
-      // Calculate office average weighted by department sizes
+      // Calculate office totals (not averages)
       const totalUsers = departmentStats.reduce((sum, dept) => sum + dept.stats.totalUsers, 0);
-      const weightedCompletionSum = departmentStats.reduce((sum, dept) => {
-        return sum + (dept.stats.taskCompletionRate * dept.stats.totalUsers);
-      }, 0);
-      const officeAverageCompletionRate = totalUsers > 0 ? Math.round(weightedCompletionSum / totalUsers) : 0;
+      const totalUsersWithReports = departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithReports, 0);
+      const totalUsersWithCompletedReports = departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithCompletedReports, 0);
+      const totalTasks = departmentStats.reduce((sum, dept) => sum + dept.stats.totalTasks, 0);
+      const totalCompletedTasks = departmentStats.reduce((sum, dept) => sum + dept.stats.completedTasks, 0);
 
       return {
         office: {
@@ -412,16 +409,14 @@ export class HierarchyReportsService {
         departments: departmentStats,
         summary: {
           totalDepartments: departmentStats.length,
-          totalUsers: departmentStats.reduce((sum, dept) => sum + dept.stats.totalUsers, 0),
-          totalUsersWithReports: departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithReports, 0),
-          totalUsersWithCompletedReports: departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithCompletedReports, 0),
-          totalUsersWithoutReports: departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithoutReports, 0),
-          averageSubmissionRate: this.calculatePercentage(
-            departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithReports, 0),
-            departmentStats.reduce((sum, dept) => sum + dept.stats.totalUsers, 0)
-          ),
-          averageCompletionRate: officeAverageCompletionRate, // Weighted average from backend
-          rankingDistribution: departmentRankingDistribution, // Add ranking distribution
+          totalUsers,
+          totalUsersWithReports,
+          totalUsersWithCompletedReports,
+          totalUsersWithoutReports: totalUsers - totalUsersWithReports,
+          // Fixed: Calculate actual percentages from totals
+          averageSubmissionRate: this.calculatePercentage(totalUsersWithReports, totalUsers),
+          averageCompletionRate: this.calculatePercentage(totalCompletedTasks, totalTasks),
+          rankingDistribution: departmentRankingDistribution,
         },
       };
     } catch (error) {

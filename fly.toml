@@ -1,10 +1,10 @@
-# fly.toml app configuration file generated for weekly-report-backend on 2025-06-26T21:27:18+07:00
+# fly.toml app configuration file for weekly-report-backend
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+# Optimized for single machine, cost-effective deployment
 #
 
 app = "weekly-report-backend"
-primary_region = "ord"
+primary_region = "sin"  # Singapore for better performance in Vietnam
 
 [build]
 
@@ -15,48 +15,45 @@ primary_region = "ord"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false  # Never auto-stop
+  auto_stop_machines = false  # NEVER auto-stop for 24/7 availability
   auto_start_machines = true  # Always auto-start
-  min_machines_running = 1    # Always keep at least 1 machine running
+  min_machines_running = 1    # Always keep EXACTLY 1 machine running
+  max_machines_running = 1    # NEVER create more than 1 machine
   
-  # Keep connections alive longer
+  # Keep-alive settings for 24/7 operation
   keep_alive_timeout = "60s"
   
-  # Handle more concurrent connections
-  concurrency = { type = "connections", hard_limit = 1000, soft_limit = 800 }
+  # Conservative concurrency for 512MB RAM single machine
+  concurrency = { type = "connections", hard_limit = 300, soft_limit = 200 }
 
-[[http_service.checks]]
-  interval = "15s"
-  grace_period = "5s"
-  method = "GET"
-  path = "/health"
-  protocol = "http"
-  timeout = "10s"
-  tls_skip_verify = false
-  headers = { "User-Agent" = "fly-health-check" }
-
+# Optimized health checks for single machine
 [[http_service.checks]]
   interval = "30s"
-  grace_period = "10s" 
+  grace_period = "20s"
   method = "GET"
-  path = "/api/health"
+  path = "/health"
   protocol = "http"
   timeout = "15s"
   tls_skip_verify = false
   headers = { "User-Agent" = "fly-health-check" }
 
-# Database health check
 [[http_service.checks]]
   interval = "60s"
-  grace_period = "15s" 
+  grace_period = "30s"
   method = "GET"
-  path = "/api/health/db"
+  path = "/api/health"
   protocol = "http"
   timeout = "20s"
   tls_skip_verify = false
   headers = { "User-Agent" = "fly-health-check" }
 
+# Single VM configuration - cost optimized
 [[vm]]
-  memory = "512mb"
+  memory = "512mb"  # Optimized for cost
   cpu_kind = "shared"
   cpus = 1
+
+# Ensure only 1 machine is created
+[deploy]
+  strategy = "immediate"
+  max_concurrent_machines = 1

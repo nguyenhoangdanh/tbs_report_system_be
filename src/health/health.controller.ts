@@ -1,72 +1,82 @@
 import { Controller, Get } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
-@ApiTags('health')
 @Controller('health')
+@Public()
 export class HealthController {
   constructor(private readonly prismaService: PrismaService) {}
 
   @Get()
-  @Public()
-  @ApiOperation({ summary: 'Basic health check' })
-  @ApiResponse({ status: 200, description: 'API is healthy' })
-  getHealth() {
+  async getHealth() {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       environment: process.env.NODE_ENV,
       version: '1.0.0',
-      pid: process.pid,
-      memory: process.memoryUsage(),
     };
   }
 
   @Get('db')
-  @Public()
-  @ApiOperation({ summary: 'Database health check' })
-  @ApiResponse({ status: 200, description: 'Database is healthy' })
-  @ApiResponse({ status: 503, description: 'Database is unhealthy' })
   async getDatabaseHealth() {
     try {
-      console.log('🔍 Database health check requested');
-      const isHealthy = await this.prismaService.isHealthy();
       const connectionStatus = await this.prismaService.getConnectionStatus();
 
-      console.log('📊 Database status:', { isHealthy, connectionStatus });
-
-      if (isHealthy) {
-        return {
-          status: 'ok',
-          timestamp: new Date().toISOString(),
-          database: {
-            status: 'connected',
-            isHealthy: true,
-            ...connectionStatus,
-          },
-        };
-      } else {
-        return {
-          status: 'degraded',
-          timestamp: new Date().toISOString(),
-          database: {
-            status: 'disconnected',
-            isHealthy: false,
-            ...connectionStatus,
-          },
-        };
-      }
+      return {
+        status: 'ok',
+        database: {
+          status: connectionStatus.isConnected ? 'healthy' : 'unhealthy',
+          ...connectionStatus,
+        },
+        timestamp: new Date().toISOString(),
+      };
     } catch (error) {
-      console.error('❌ Database health check error:', error);
+      return {
+        status: 'error',
+        database: {
+          status: 'unhealthy',
+          error: error.message,
+        },
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Get('detailed')
+  async getDetailedHealth() {
+    try {
+      const connectionStatus = await this.prismaService.getConnectionStatus();
+      const dbStats = await this.prismaService.getDatabaseStats();
+      const migrationStatus = await this.prismaService.getMigrationStatus();
+
+      return {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV,
+        version: '1.0.0',
+        database: {
+          connection: connectionStatus,
+          stats: dbStats,
+          migrations: migrationStatus,
+        },
+        memory: {
+          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
+          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB',
+        },
+      };
+    } catch (error) {
       return {
         status: 'error',
         timestamp: new Date().toISOString(),
-        database: {
-          status: 'error',
-          isHealthy: false,
-          error: error.message,
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV,
+        version: '1.0.0',
+        error: error.message,
+        memory: {
+          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
+          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB',
         },
       };
     }

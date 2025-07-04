@@ -133,24 +133,41 @@ export class AuthController {
     return this.authService.resetPassword(resetPasswordDto);
   }
 
-  // Test endpoint to check if debug cookie persists
+  // Enhanced test endpoint to debug cookie persistence
   @Post('check-cookie')
   @Public()
-  @ApiOperation({ summary: 'Check if cookie persists' })
-  checkCookie(@Req() req: any) {
+  @ApiOperation({ summary: 'Check if cookie persists and debug cross-origin' })
+  checkCookie(@Req() req: any, @Res({ passthrough: true }) response: Response) {
+    const accessToken = req.cookies['access_token'];
     const debugToken = req.cookies['debug-token'];
-    const authToken = req.cookies['auth-token'];
+    
+    // Set a test cookie to verify cross-origin functionality
+    response.cookie('test-cookie', `test-${Date.now()}`, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 300000, // 5 minutes
+      path: '/',
+    });
 
-    console.log('[CHECK] Debug token:', debugToken);
-    console.log('[CHECK] Auth token exists:', !!authToken);
-    console.log('[CHECK] All cookies:', req.cookies);
+    console.log('[COOKIE-DEBUG] Request details:', {
+      origin: req.headers.origin,
+      userAgent: req.headers['user-agent']?.substring(0, 50),
+      cookies: Object.keys(req.cookies || {}),
+      hasAccessToken: !!accessToken,
+      hasDebugToken: !!debugToken,
+      accessTokenLength: accessToken ? accessToken.length : 0,
+    });
 
     return {
       success: true,
+      hasAccessToken: !!accessToken,
       hasDebugToken: !!debugToken,
-      hasAuthToken: !!authToken,
+      accessTokenLength: accessToken ? accessToken.length : 0,
       debugTokenValue: debugToken,
-      allCookies: Object.keys(req.cookies),
+      allCookies: Object.keys(req.cookies || {}),
+      requestOrigin: req.headers.origin,
+      timestamp: new Date().toISOString(),
     };
   }
 }

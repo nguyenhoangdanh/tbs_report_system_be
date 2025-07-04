@@ -176,6 +176,11 @@ export class ReportsService {
         updateData.isCompleted = updateReportDto.isCompleted;
       }
 
+      if (updateReportDto.updatedAt) {
+        updateData.updatedAt = new Date();
+      }
+
+
       // Update the report
       const updatedReport = await prisma.report.update({
         where: { id: reportId },

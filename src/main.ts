@@ -1,10 +1,11 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, BadRequestException } from '@nestjs/common';
+import { ValidationPipe, BadRequestException, RequestMethod } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { EnvironmentConfig } from './config/config.environment';
 import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { PrismaService } from './common/prisma.service';
 
 async function bootstrap() {
   try {
@@ -43,13 +44,32 @@ async function bootstrap() {
       console.log('❌ DATABASE_URL not configured');
     }
 
-    const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-      logger:
-        process.env.NODE_ENV === 'production'
-          ? ['error', 'warn', 'log']
-          : ['log', 'error', 'warn', 'debug'],
-      bufferLogs: true,
-    });
+    // Database connection retry with exponential backoff
+    const maxRetries = 5;
+    let app: NestExpressApplication;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 Creating app instance (attempt ${attempt}/${maxRetries})...`);
+        app = await NestFactory.create<NestExpressApplication>(AppModule, {
+          logger:
+            process.env.NODE_ENV === 'production'
+              ? ['error', 'warn', 'log']
+              : ['log', 'error', 'warn', 'debug'],
+          bufferLogs: true,
+        });
+        console.log('✅ App instance created successfully');
+        break;
+      } catch (error) {
+        console.error(`❌ Failed to create app (attempt ${attempt}/${maxRetries}):`, error.message);
+        if (attempt === maxRetries) {
+          throw error;
+        }
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+        console.log(`⏳ Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
 
     // Essential middleware
     app.use(cookieParser());
@@ -59,13 +79,27 @@ async function bootstrap() {
     const envConfig = app.get(EnvironmentConfig);
     const corsConfig = envConfig.getCorsConfig();
 
-    // Apply CORS configuration
-    app.enableCors(corsConfig);
+    // Apply CORS configuration with enhanced debugging for production
+    app.enableCors({
+      ...corsConfig,
+      credentials: true, // Essential for cookies
+      // Enhanced CORS for production debugging
+      optionsSuccessStatus: 200,
+      preflightContinue: false,
+    });
+    
     console.log('✅ CORS configuration applied');
     console.log(`🌐 Allowed origins: ${envConfig.allowedOrigins.join(', ')}`);
+    console.log(`🍪 Credentials enabled: true`);
+    console.log(`🔒 Cookie settings: secure=${envConfig.isProduction}, sameSite=${envConfig.isProduction ? 'none' : 'lax'}`);
 
-    // Global prefix for API routes
-    app.setGlobalPrefix('api');
+    // Global prefix for API routes (EXCLUDE health endpoints)
+    app.setGlobalPrefix('api', {
+      exclude: [
+        { path: 'health', method: RequestMethod.GET },
+        { path: '', method: RequestMethod.GET }, // Root path
+      ],
+    });
 
     // More lenient validation pipe to prevent 400 errors
     app.useGlobalPipes(
@@ -123,6 +157,21 @@ async function bootstrap() {
 
     const port = envConfig.port || 8080;
 
+    // Graceful shutdown handling
+    process.on('SIGTERM', async () => {
+      console.log('📥 Received SIGTERM signal');
+      await app.close();
+      console.log('✅ Application closed gracefully');
+      process.exit(0);
+    });
+
+    process.on('SIGINT', async () => {
+      console.log('📥 Received SIGINT signal');
+      await app.close();
+      console.log('✅ Application closed gracefully');
+      process.exit(0);
+    });
+
     await app.listen(port, '0.0.0.0');
 
     console.log(`🎉 Application is running on: http://0.0.0.0:${port}`);
@@ -133,8 +182,23 @@ async function bootstrap() {
     if (process.env.NODE_ENV !== 'production') {
       console.log(`📚 API documentation: http://0.0.0.0:${port}/api`);
     }
+    
+    // Test database connection after startup
+    if (process.env.NODE_ENV === 'production') {
+      setTimeout(async () => {
+        try {
+          const prismaService = app.get(PrismaService); // Fix: Use PrismaService directly
+          await prismaService.testConnection();
+          console.log('✅ Database connection verified');
+        } catch (error) {
+          console.error('❌ Database connection failed:', error.message);
+        }
+      }, 5000);
+    }
+    
   } catch (error) {
     console.error('❌ Failed to start application:', error);
+    console.error('Stack trace:', error.stack);
     process.exit(1);
   }
 }

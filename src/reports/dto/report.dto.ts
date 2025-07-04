@@ -96,4 +96,11 @@ export class UpdateReportDto {
   @ValidateNested({ each: true })
   @Type(() => CreateTaskReportDto)
   tasks?: CreateTaskReportDto[];
+
+  @ApiPropertyOptional({ type: Date, description: 'Last updated timestamp' })
+  @IsOptional()
+  @Type(() => Date)
+  @IsString()
+  @Transform(({ value }) => (value ? new Date(value) : undefined))
+  updatedAt?: Date;
 }

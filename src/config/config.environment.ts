@@ -105,7 +105,7 @@ export class EnvironmentConfig {
         const error = new Error(`CORS policy blocked origin: ${origin}`);
         callback(error, false);
       },
-      credentials: true,
+      credentials: true, // Essential for cookies
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
         'Origin',
@@ -114,6 +114,7 @@ export class EnvironmentConfig {
         'Accept',
         'Authorization',
         'Cache-Control',
+        'Cookie', // Add Cookie header
       ],
       exposedHeaders: ['set-cookie'],
       optionsSuccessStatus: 200,

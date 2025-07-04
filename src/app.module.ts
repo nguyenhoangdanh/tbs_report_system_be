@@ -61,7 +61,7 @@ import { RankingModule } from './ranking/ranking.module';
   controllers: [AppController],
   providers: [
     AppService,
-    PrismaService,
+    PrismaService, // Fix: Remove the complex provider object
     EnvironmentConfig,
     {
       provide: APP_GUARD,

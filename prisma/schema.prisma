@@ -1,12 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["relationJoins"]
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -78,7 +78,7 @@ model User {
   password      String
   firstName     String
   lastName      String
-  phone         String    @unique
+  phone         String      @unique
   role          Role        @default(USER)
   jobPositionId String
   isActive      Boolean     @default(true)
@@ -151,12 +151,4 @@ enum Role {
 enum OfficeType {
   HEAD_OFFICE
   FACTORY_OFFICE
-}
-
-enum EmployeeRanking {
-  EXCELLENT       // Xuất sắc (90-100%)
-  GOOD           // Tốt (80-89%)
-  AVERAGE        // Trung bình (70-79%)
-  BELOW_AVERAGE  // Dưới trung bình (60-69%)
-  POOR           // Kém (< 60%)
 }

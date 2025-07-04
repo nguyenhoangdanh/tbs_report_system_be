@@ -145,29 +145,91 @@ export class AuthService {
       // Ensure database connection before query
       await this.prisma.ensureConnection();
 
-      // Optimized query with selective includes
-      const user = await this.prisma.user.findUnique({
-        where: { employeeCode },
-        include: {
-          office: {
-            select: { id: true, name: true, type: true }
-          },
-          jobPosition: {
-            include: {
-              position: {
-                select: { id: true, name: true, description: true }
-              },
-              department: {
-                select: { id: true, name: true }
+      // Enhanced user lookup - support both MSNV and email prefix
+      let user = null;
+      
+      // Determine if input is MSNV (all digits) or email prefix (contains letters)
+      const isNumericMSNV = /^\d+$/.test(employeeCode);
+      const isEmailPrefix = /^[a-zA-Z][a-zA-Z0-9]*$/.test(employeeCode) && employeeCode.length >= 2 && employeeCode.length <= 20;
+      
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log(`Login type detection for "${employeeCode}":`, {
+          isNumericMSNV,
+          isEmailPrefix,
+          length: employeeCode.length
+        });
+      }
+
+      // First, try direct lookup by employeeCode (MSNV)
+      if (isNumericMSNV) {
+        user = await this.prisma.user.findUnique({
+          where: { employeeCode },
+          include: {
+            office: {
+              select: { id: true, name: true, type: true }
+            },
+            jobPosition: {
+              include: {
+                position: {
+                  select: { id: true, name: true, description: true }
+                },
+                department: {
+                  select: { id: true, name: true }
+                },
               },
             },
           },
-        },
-      });
+        });
+
+        if (process.env.NODE_ENV !== 'production' && user) {
+          this.logger.log(`Found user by MSNV: ${employeeCode} -> ${user.email}`);
+        }
+      }
+
+      // If not found by MSNV and input looks like email prefix, try email search
+      if (!user && isEmailPrefix) {
+        // Find user by email prefix - construct full email pattern
+        const expectedEmail = `${employeeCode}@tbsgroup.vn`;
+        
+        if (process.env.NODE_ENV !== 'production') {
+          this.logger.log(`Searching for email: ${expectedEmail}`);
+        }
+        
+        user = await this.prisma.user.findFirst({
+          where: {
+            email: expectedEmail,  // Search for exact email match
+            isActive: true
+          },
+          include: {
+            office: {
+              select: { id: true, name: true, type: true }
+            },
+            jobPosition: {
+              include: {
+                position: {
+                  select: { id: true, name: true, description: true }
+                },
+                department: {
+                  select: { id: true, name: true }
+                },
+              },
+            },
+          },
+        });
+
+        if (process.env.NODE_ENV !== 'production' && user) {
+          this.logger.log(`Found user by email prefix: ${employeeCode} -> ${user.email}`);
+        }
+      }
 
       if (!user) {
         if (process.env.NODE_ENV !== 'production') {
-          this.logger.warn(`Login failed for ${employeeCode}: User not found`);
+          this.logger.warn(`Login failed for ${employeeCode}: User not found`, {
+            searchedAsMSNV: isNumericMSNV,
+            searchedAsEmailPrefix: isEmailPrefix,
+            expectedEmail: isEmailPrefix ? `${employeeCode}@tbsgroup.vn` : null,
+            inputType: isNumericMSNV ? 'NUMERIC_MSNV' : isEmailPrefix ? 'EMAIL_PREFIX' : 'INVALID_FORMAT'
+          });
         }
         throw new UnauthorizedException('Invalid credentials');
       }
@@ -189,10 +251,26 @@ export class AuthService {
         throw new UnauthorizedException('Invalid credentials');
       }
 
-      // Generate JWT token with updated expiration
+      // Generate JWT token with explicit secret logging for debugging
       const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
+      
+      // Debug JWT secret in production to verify consistency
+      if (this.envConfig.isProduction) {
+        this.logger.log('JWT Generation Debug:', {
+          secretLength: this.envConfig.jwtSecret.length,
+          secretPrefix: this.envConfig.jwtSecret.substring(0, 10),
+          payloadSub: payload.sub,
+          expiresIn: rememberMe ? '30d' : '7d',
+          loginMethod: isNumericMSNV ? 'MSNV' : 'EMAIL_PREFIX',
+          originalInput: employeeCode,
+          foundUser: user.employeeCode,
+          matchedEmail: user.email
+        });
+      }
+      
       const access_token = this.jwtService.sign(payload, {
-        expiresIn: rememberMe ? '30d' : '7d'  // Updated: true = 30 days, false = 7 days
+        expiresIn: rememberMe ? '30d' : '7d',
+        secret: this.envConfig.jwtSecret, // Explicitly pass secret
       });
 
       // Set cookie if response object is provided
@@ -390,13 +468,14 @@ export class AuthService {
 
     const isProduction = this.envConfig.isProduction;
 
+    // Enhanced cookie options for cross-origin
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' as const : 'lax' as const,
       maxAge,
       path: '/',
-      domain: isProduction ? this.envConfig.cookieDomain || undefined : undefined,
+      // Remove domain completely for cross-origin
     };
 
     this.logger.log('Setting auth cookie:', {
@@ -405,12 +484,23 @@ export class AuthService {
       rememberMe,
       durationDays: rememberMe ? 30 : 7,
       isProduction,
-      domain: cookieOptions.domain,
       secure: cookieOptions.secure,
       sameSite: cookieOptions.sameSite,
+      hasResponse: !!response,
     });
 
     response.cookie('access_token', token, cookieOptions);
+    
+    // Debug: Also set a test cookie to verify cross-origin works
+    if (isProduction) {
+      response.cookie('debug-token', 'test-value', {
+        httpOnly: false, // Make it accessible via JS for debugging
+        secure: true,
+        sameSite: 'none',
+        maxAge: 300000, // 5 minutes
+        path: '/',
+      });
+    }
   }
 
   private clearAuthCookie(response: Response) {
@@ -421,11 +511,19 @@ export class AuthService {
       secure: isProduction,
       sameSite: isProduction ? 'none' as const : 'lax' as const,
       path: '/',
-      domain: isProduction ? this.envConfig.cookieDomain || undefined : undefined,
     };
 
     this.logger.log('Clearing auth cookie with options:', cookieOptions);
 
     response.clearCookie('access_token', cookieOptions);
+    
+    // Also clear debug cookie
+    if (isProduction) {
+      response.clearCookie('debug-token', {
+        secure: true,
+        sameSite: 'none',
+        path: '/',
+      });
+    }
   }
 }

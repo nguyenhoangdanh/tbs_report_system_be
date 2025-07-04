@@ -135,7 +135,7 @@ export class ReportsController {
     return report;
   }
 
-  @Patch(':id') // Changed from Put to Patch
+  @Patch(':id')
   @ApiOperation({ summary: 'Update report' })
   async updateReport(
     @Param('id') id: string,
