@@ -470,20 +470,14 @@ async function createUsers(
       const fullName = userData.hoTen;
       const phone = userData.phone || '';
       
-      const email = userData.email || generateEmail(userData.msnv, userData.hoTen);
-      
       const userRole = userData.role ? 
         (Role[userData.role as keyof typeof Role] || determineRole(userData.cd, userData.vt, userData.pb)) :
         determineRole(userData.cd, userData.vt, userData.pb);
 
-      // Check if user already exists
-      const existingUser = await prisma.user.findFirst({
+      // Check if user already exists by employeeCode only
+      const existingUser = await prisma.user.findUnique({
         where: {
-          OR: [
-            { employeeCode },
-            ...(phone ? [{ phone }] : []),
-            { email }
-          ]
+          employeeCode: employeeCode
         }
       });
 
@@ -491,6 +485,41 @@ async function createUsers(
         console.warn(`   ⚠️  User already exists: ${employeeCode} - ${fullName}`);
         skipCount++;
         continue;
+      }
+
+      // Generate unique email (handle duplicates with numbers)
+      let email = userData.email || generateEmail(userData.msnv, userData.hoTen);
+      let emailSuffix = 0;
+      let isEmailUnique = false;
+      
+      while (!isEmailUnique) {
+        const emailToCheck = emailSuffix === 0 ? email : email.replace('@tbsgroup.vn', `${emailSuffix}@tbsgroup.vn`);
+        
+        const existingUserWithEmail = await prisma.user.findUnique({
+          where: {
+            email: emailToCheck
+          }
+        });
+        
+        if (!existingUserWithEmail) {
+          email = emailToCheck;
+          isEmailUnique = true;
+        } else {
+          emailSuffix++;
+          if (emailSuffix > 10) {
+            // Fallback to employee code based email after 10 attempts
+            email = `${employeeCode.toLowerCase()}@tbsgroup.vn`;
+            const finalCheck = await prisma.user.findUnique({
+              where: { email: email }
+            });
+            if (!finalCheck) {
+              isEmailUnique = true;
+            } else {
+              email = `${employeeCode.toLowerCase()}${Date.now()}@tbsgroup.vn`;
+              isEmailUnique = true;
+            }
+          }
+        }
       }
 
       // Find job position and office

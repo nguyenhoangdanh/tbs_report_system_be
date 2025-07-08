@@ -75,7 +75,13 @@
     "db:clear-all": "./scripts/force-delete-data.sh",
     "db:fix-ssl": "./scripts/fix-ssl-issues.sh",
     "upload-excel": "./scripts/upload-excel.sh",
-    "create-test-users": "flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/seed.ts'"
+    "create-test-users": "flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/seed.ts'",
+    "check-24-7": "./scripts/check-24-7-status.sh",
+    "fix-24-7": "./scripts/fix-24-7.sh",
+    "restart-all": "./scripts/restart-all.sh",
+    "check-config": "flyctl status && flyctl machine list",
+    "optimize-performance": "./scripts/fix-24-7.sh",
+    "wake-up": "curl -f https://weekly-report-backend.fly.dev/health && curl -f https://weekly-report-backend.fly.dev/api/health"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

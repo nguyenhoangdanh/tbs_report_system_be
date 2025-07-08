@@ -96,7 +96,7 @@ async function bootstrap() {
     // Global prefix for API routes (EXCLUDE health endpoints)
     app.setGlobalPrefix('api', {
       exclude: [
-        { path: 'health', method: RequestMethod.GET },
+        // { path: 'health', method: RequestMethod.GET },
         { path: '', method: RequestMethod.GET }, // Root path
       ],
     });
@@ -137,7 +137,6 @@ async function bootstrap() {
         .addTag('auth', 'Authentication endpoints')
         .addTag('users', 'User management')
         .addTag('reports', 'Weekly reports')
-        .addTag('health', 'Health check endpoints')
         .build();
 
       const document = SwaggerModule.createDocument(app, config);
@@ -239,7 +238,7 @@ export default async (req: any, res: any) => {
     }
 
     // Quick responses for common requests
-    if (req.url === '/health') {
+    if (req.url === '/api/health') {
       res.status(200).json({
         status: 'ok',
         timestamp: new Date().toISOString(),

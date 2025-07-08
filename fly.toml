@@ -1,10 +1,8 @@
 # fly.toml app configuration file for weekly-report-backend
-#
-# Optimized for single machine, cost-effective deployment
-#
+# FIXED: Strict 24/7 configuration to prevent auto-sleep
 
 app = "weekly-report-backend"
-primary_region = "sin"  # Singapore for better performance in Vietnam
+primary_region = "sin"
 
 [build]
 
@@ -15,45 +13,47 @@ primary_region = "sin"  # Singapore for better performance in Vietnam
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false  # NEVER auto-stop for 24/7 availability
-  auto_start_machines = true  # Always auto-start
-  min_machines_running = 1    # Always keep EXACTLY 1 machine running
-  max_machines_running = 1    # NEVER create more than 1 machine
   
-  # Keep-alive settings for 24/7 operation
-  keep_alive_timeout = "60s"
+  # CRITICAL: Prevent auto-sleep completely
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  max_machines_running = 1
   
-  # Conservative concurrency for 512MB RAM single machine
+  # Keep-alive settings
+  keep_alive_timeout = "120s"
+  
+  # Optimized concurrency
   concurrency = { type = "connections", hard_limit = 300, soft_limit = 200 }
 
-# Optimized health checks for single machine
+# Aggressive health checks to keep machine awake
+[[http_service.checks]]
+  interval = "10s"
+  grace_period = "15s"
+  method = "GET"
+  path = "/health"
+  protocol = "http"
+  timeout = "10s"
+  tls_skip_verify = false
+  headers = { "User-Agent" = "fly-health-check" }
+
 [[http_service.checks]]
   interval = "30s"
   grace_period = "20s"
   method = "GET"
-  path = "/health"
+  path = "/api/health"
   protocol = "http"
   timeout = "15s"
   tls_skip_verify = false
   headers = { "User-Agent" = "fly-health-check" }
 
-[[http_service.checks]]
-  interval = "60s"
-  grace_period = "30s"
-  method = "GET"
-  path = "/api/health"
-  protocol = "http"
-  timeout = "20s"
-  tls_skip_verify = false
-  headers = { "User-Agent" = "fly-health-check" }
-
-# Single VM configuration - cost optimized
+# VM configuration - cost optimized but always-on
 [[vm]]
-  memory = "512mb"  # Optimized for cost
+  memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
 
-# Ensure only 1 machine is created
+# Deploy settings - ensure single machine
 [deploy]
   strategy = "immediate"
   max_concurrent_machines = 1
