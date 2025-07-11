@@ -1,14 +1,14 @@
 import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { Role } from '@prisma/client';
-import { getCurrentWeek } from '../common/utils/week-utils';
+import { getCurrentWorkWeek } from '../common/utils/week-utils';
 
 export enum EmployeeRanking {
-  EXCELLENT = 'EXCELLENT',       // Xuất sắc (90-100%)
-  GOOD = 'GOOD',                 // Tốt (80-89%)
-  AVERAGE = 'AVERAGE',           // Trung bình (70-79%)
-  BELOW_AVERAGE = 'BELOW_AVERAGE', // Dưới trung bình (60-69%)
-  POOR = 'POOR'                  // Kém (< 60%)
+  EXCELLENT = 'EXCELLENT',       // Xuất sắc (>=100%)
+  GOOD = 'GOOD',                 // Tốt (>=95%)
+  AVERAGE = 'AVERAGE',           // Trung bình (>=90%)
+  BELOW_AVERAGE = 'BELOW_AVERAGE', // Dưới trung bình (>=85%)
+  POOR = 'POOR'                  // Kém (<85%)
 }
 
 @Injectable()
@@ -17,12 +17,12 @@ export class RankingService {
 
   constructor(private prisma: PrismaService) {}
 
-  // Calculate ranking based on completion rate
+  // Calculate ranking based on completion rate - Updated thresholds
   private calculateRanking(completionRate: number): EmployeeRanking {
-    if (completionRate >= 90) return EmployeeRanking.EXCELLENT;
-    if (completionRate >= 80) return EmployeeRanking.GOOD;
-    if (completionRate >= 70) return EmployeeRanking.AVERAGE;
-    if (completionRate >= 60) return EmployeeRanking.BELOW_AVERAGE;
+    if (completionRate >= 100) return EmployeeRanking.EXCELLENT;
+    if (completionRate >= 95) return EmployeeRanking.GOOD;
+    if (completionRate >= 90) return EmployeeRanking.AVERAGE;
+    if (completionRate >= 85) return EmployeeRanking.BELOW_AVERAGE;
     return EmployeeRanking.POOR;
   }
 
@@ -50,10 +50,12 @@ export class RankingService {
       employeeId?: string;
       weekNumber?: number;
       year?: number;
-      periodWeeks?: number; // Number of weeks to analyze (default: 4)
+      periodWeeks?: number;
+      positionId?: string;
+      jobPositionId?: string;
     }
   ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
     const targetWeek = filters.weekNumber || currentWeek;
     const targetYear = filters.year || currentYear;
     const periodWeeks = filters.periodWeeks || 4;
@@ -73,8 +75,24 @@ export class RankingService {
     }
 
     // Build where clause for user access control
-    const userWhereClause: any = { isActive: true };
+    const userWhereClause: any = { 
+      isActive: true,
+      jobPosition: {
+        position: {
+          isReportable: true // Exclude CEO from reports
+        }
+      }
+    };
     
+    // Add position/jobPosition filters
+    if (filters.positionId) {
+      userWhereClause.jobPosition.positionId = filters.positionId;
+    }
+    
+    if (filters.jobPositionId) {
+      userWhereClause.jobPositionId = filters.jobPositionId;
+    }
+
     if (filters.employeeId) {
       // Check if current user can access this employee
       if (!await this.canAccessEmployee(currentUser, filters.employeeId)) {
@@ -190,7 +208,7 @@ export class RankingService {
       periodWeeks?: number;
     }
   ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
     const targetWeek = filters.weekNumber || currentWeek;
     const targetYear = filters.year || currentYear;
     const periodWeeks = filters.periodWeeks || 4;
@@ -316,7 +334,7 @@ export class RankingService {
       periodWeeks?: number;
     }
   ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
     const targetWeek = filters.weekNumber || currentWeek;
     const targetYear = filters.year || currentYear;
     const periodWeeks = filters.periodWeeks || 4;
@@ -481,7 +499,7 @@ export class RankingService {
       throw new ForbiddenException('Access denied');
     }
 
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
     const targetWeek = filters.weekNumber || currentWeek;
     const targetYear = filters.year || currentYear;
     const periodWeeks = filters.periodWeeks || 4;
@@ -605,6 +623,476 @@ export class RankingService {
     };
   }
 
+  // Add method for hierarchy-based ranking
+  async getPositionRanking(
+    currentUser: any,
+    filters: {
+      weekNumber?: number;
+      year?: number;
+      periodWeeks?: number;
+      timeFrame?: 'week' | 'month' | 'year';
+    }
+  ) {
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
+    
+    // Get positions excluding CEO
+    const positions = await this.prisma.position.findMany({
+      where: {
+        isReportable: true,
+        level: { gt: 0 } // Exclude CEO (level 0)
+      },
+      include: {
+        jobPositions: {
+          include: {
+            users: {
+              where: { isActive: true },
+              include: {
+                reports: {
+                  where: this.buildTimeFilter(filters),
+                  include: {
+                    tasks: { select: { isCompleted: true } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { level: 'asc' }
+    });
+
+    const positionStats = positions.map(position => {
+      const allUsers = position.jobPositions.flatMap(jp => jp.users);
+      
+      const employeeRankings = allUsers.map(user => {
+        const totalTasks = user.reports.reduce((sum, report) => sum + report.tasks.length, 0);
+        const completedTasks = user.reports.reduce(
+          (sum, report) => sum + report.tasks.filter(task => task.isCompleted).length, 
+          0
+        );
+        
+        const completionRate = this.calculatePercentage(completedTasks, totalTasks);
+        const ranking = this.calculateRanking(completionRate);
+        
+        return { completionRate, ranking };
+      });
+
+      const averageCompletionRate = employeeRankings.length > 0
+        ? Math.round(employeeRankings.reduce((sum, emp) => sum + emp.completionRate, 0) / employeeRankings.length)
+        : 0;
+
+      return {
+        position: {
+          id: position.id,
+          name: position.name,
+          level: position.level,
+          description: position.description
+        },
+        stats: {
+          totalEmployees: allUsers.length,
+          averageCompletionRate,
+          positionRanking: this.calculateRanking(averageCompletionRate),
+          rankingDistribution: this.calculateRankingCounts(employeeRankings)
+        }
+      };
+    });
+
+    return {
+      filters,
+      groupBy: 'position' as const,
+      positions: positionStats,
+      summary: this.calculatePositionSummary(positionStats)
+    };
+  }
+
+  async getJobPositionRanking(
+    currentUser: any,
+    filters: {
+      weekNumber?: number;
+      year?: number;
+      periodWeeks?: number;
+      timeFrame?: 'week' | 'month' | 'year';
+      departmentId?: string;
+    }
+  ) {
+    const jobPositions = await this.prisma.jobPosition.findMany({
+      where: {
+        isActive: true,
+        position: {
+          level: { gte: 6 } // Staff level
+        },
+        ...(filters.departmentId && { departmentId: filters.departmentId })
+      },
+      include: {
+        position: true,
+        department: true,
+        users: {
+          where: { isActive: true },
+          include: {
+            reports: {
+              where: this.buildTimeFilter(filters),
+              include: {
+                tasks: { select: { isCompleted: true } }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const jobPositionStats = jobPositions.map(jobPosition => {
+      const employeeRankings = jobPosition.users.map(user => {
+        const totalTasks = user.reports.reduce((sum, report) => sum + report.tasks.length, 0);
+        const completedTasks = user.reports.reduce(
+          (sum, report) => sum + report.tasks.filter(task => task.isCompleted).length, 
+          0
+        );
+        
+        const completionRate = this.calculatePercentage(completedTasks, totalTasks);
+        const ranking = this.calculateRanking(completionRate);
+        
+        return { completionRate, ranking };
+      });
+
+      const averageCompletionRate = employeeRankings.length > 0
+        ? Math.round(employeeRankings.reduce((sum, emp) => sum + emp.completionRate, 0) / employeeRankings.length)
+        : 0;
+
+      return {
+        jobPosition: {
+          id: jobPosition.id,
+          jobName: jobPosition.jobName,
+          code: jobPosition.code,
+          department: jobPosition.department,
+          position: jobPosition.position
+        },
+        stats: {
+          totalEmployees: jobPosition.users.length,
+          averageCompletionRate,
+          jobPositionRanking: this.calculateRanking(averageCompletionRate),
+          rankingDistribution: this.calculateRankingCounts(employeeRankings)
+        }
+      };
+    });
+
+    return {
+      filters,
+      groupBy: 'jobPosition' as const,
+      jobPositions: jobPositionStats,
+      summary: this.calculateJobPositionSummary(jobPositionStats)
+    };
+  }
+
+  async getTimePerformance(
+    currentUser: any,
+    filters: {
+      timeFrame: 'week' | 'month' | 'year';
+      positionId?: string;
+      jobPositionId?: string;
+      year?: number;
+    }
+  ) {
+    const currentYear = filters.year || new Date().getFullYear();
+    const timeSeriesData = [];
+
+    if (filters.timeFrame === 'week') {
+      // Get weekly data for the year
+      for (let week = 1; week <= 52; week++) {
+        const weekData = await this.getWeeklyPerformanceData(week, currentYear, filters);
+        timeSeriesData.push({
+          period: `Week ${week}`,
+          weekNumber: week,
+          year: currentYear,
+          ...weekData
+        });
+      }
+    } else if (filters.timeFrame === 'month') {
+      // Get monthly data for the year
+      for (let month = 1; month <= 12; month++) {
+        const monthData = await this.getMonthlyPerformanceData(month, currentYear, filters);
+        timeSeriesData.push({
+          period: `Month ${month}`,
+          month,
+          year: currentYear,
+          ...monthData
+        });
+      }
+    } else if (filters.timeFrame === 'year') {
+      // Get yearly data for the last 3 years
+      for (let year = currentYear - 2; year <= currentYear; year++) {
+        const yearData = await this.getYearlyPerformanceData(year, filters);
+        timeSeriesData.push({
+          period: `Year ${year}`,
+          year,
+          ...yearData
+        });
+      }
+    }
+
+    return {
+      timeFrame: filters.timeFrame,
+      filters,
+      timeSeriesData,
+      summary: this.calculateTimePerformanceSummary(timeSeriesData)
+    };
+  }
+
+  // Helper method to build time filters
+  private buildTimeFilter(filters: any) {
+    const { weekNumber, year, timeFrame, periodWeeks = 4 } = filters;
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
+
+    if (timeFrame === 'week') {
+      return {
+        weekNumber: weekNumber || currentWeek,
+        year: year || currentYear
+      };
+    } else if (timeFrame === 'month') {
+      // Get all weeks in the month
+      const targetYear = year || currentYear;
+      const targetMonth = Math.floor(((weekNumber || currentWeek) - 1) / 4) + 1;
+      const startWeek = (targetMonth - 1) * 4 + 1;
+      const endWeek = Math.min(startWeek + 3, 52);
+      
+      return {
+        year: targetYear,
+        weekNumber: {
+          gte: startWeek,
+          lte: endWeek
+        }
+      };
+    } else if (timeFrame === 'year') {
+      return {
+        year: year || currentYear
+      };
+    } else {
+      // Default: period weeks
+      const weekRanges = [];
+      const targetWeek = weekNumber || currentWeek;
+      const targetYear = year || currentYear;
+      
+      for (let i = 0; i < periodWeeks; i++) {
+        let week = targetWeek - i;
+        let yr = targetYear;
+        
+        if (week <= 0) {
+          week = 52 + week;
+          yr = targetYear - 1;
+        }
+        
+        weekRanges.push({ weekNumber: week, year: yr });
+      }
+      
+      return {
+        OR: weekRanges
+      };
+    }
+  }
+
+  private async getWeeklyPerformanceData(week: number, year: number, filters: any) {
+    const whereClause: any = {
+      weekNumber: week,
+      year,
+      user: {
+        isActive: true
+      }
+    };
+
+    if (filters.positionId) {
+      whereClause.user.jobPosition = { positionId: filters.positionId };
+    }
+
+    if (filters.jobPositionId) {
+      whereClause.user.jobPositionId = filters.jobPositionId;
+    }
+
+    const reports = await this.prisma.report.findMany({
+      where: whereClause,
+      include: {
+        tasks: { select: { isCompleted: true } }
+      }
+    });
+
+    const totalTasks = reports.reduce((sum, report) => sum + report.tasks.length, 0);
+    const completedTasks = reports.reduce(
+      (sum, report) => sum + report.tasks.filter(task => task.isCompleted).length,
+      0
+    );
+
+    return {
+      totalReports: reports.length,
+      totalTasks,
+      completedTasks,
+      completionRate: this.calculatePercentage(completedTasks, totalTasks)
+    };
+  }
+
+  private async getMonthlyPerformanceData(month: number, year: number, filters: any) {
+    const startWeek = (month - 1) * 4 + 1;
+    const endWeek = Math.min(startWeek + 3, 52);
+
+    const whereClause: any = {
+      weekNumber: {
+        gte: startWeek,
+        lte: endWeek
+      },
+      year,
+      user: {
+        isActive: true
+      }
+    };
+
+    if (filters.positionId) {
+      whereClause.user.jobPosition = { positionId: filters.positionId };
+    }
+
+    if (filters.jobPositionId) {
+      whereClause.user.jobPositionId = filters.jobPositionId;
+    }
+
+    const reports = await this.prisma.report.findMany({
+      where: whereClause,
+      include: {
+        tasks: { select: { isCompleted: true } }
+      }
+    });
+
+    const totalTasks = reports.reduce((sum, report) => sum + report.tasks.length, 0);
+    const completedTasks = reports.reduce(
+      (sum, report) => sum + report.tasks.filter(task => task.isCompleted).length,
+      0
+    );
+
+    return {
+      totalReports: reports.length,
+      totalTasks,
+      completedTasks,
+      completionRate: this.calculatePercentage(completedTasks, totalTasks)
+    };
+  }
+
+  private async getYearlyPerformanceData(year: number, filters: any) {
+    const whereClause: any = {
+      year,
+      user: {
+        isActive: true
+      }
+    };
+
+    if (filters.positionId) {
+      whereClause.user.jobPosition = { positionId: filters.positionId };
+    }
+
+    if (filters.jobPositionId) {
+      whereClause.user.jobPositionId = filters.jobPositionId;
+    }
+
+    const reports = await this.prisma.report.findMany({
+      where: whereClause,
+      include: {
+        tasks: { select: { isCompleted: true } }
+      }
+    });
+
+    const totalTasks = reports.reduce((sum, report) => sum + report.tasks.length, 0);
+    const completedTasks = reports.reduce(
+      (sum, report) => sum + report.tasks.filter(task => task.isCompleted).length,
+      0
+    );
+
+    return {
+      totalReports: reports.length,
+      totalTasks,
+      completedTasks,
+      completionRate: this.calculatePercentage(completedTasks, totalTasks)
+    };
+  }
+
+  private calculatePositionSummary(positionStats: any[]) {
+    const totalEmployees = positionStats.reduce((sum, pos) => sum + pos.stats.totalEmployees, 0);
+    const averageCompletionRate = positionStats.length > 0
+      ? Math.round(positionStats.reduce((sum, pos) => sum + pos.stats.averageCompletionRate, 0) / positionStats.length)
+      : 0;
+
+    return {
+      totalPositions: positionStats.length,
+      totalEmployees,
+      averageCompletionRate,
+      bestPerformingPosition: positionStats.length > 0 
+        ? positionStats.reduce((best, current) =>
+            current.stats.averageCompletionRate > best.stats.averageCompletionRate ? current : best
+          )
+        : null,
+      needsImprovementPositions: positionStats.filter(pos => 
+        pos.stats.averageCompletionRate < 85
+      ).length
+    };
+  }
+
+  private calculateJobPositionSummary(jobPositionStats: any[]) {
+    const totalEmployees = jobPositionStats.reduce((sum, jp) => sum + jp.stats.totalEmployees, 0);
+    const averageCompletionRate = jobPositionStats.length > 0
+      ? Math.round(jobPositionStats.reduce((sum, jp) => sum + jp.stats.averageCompletionRate, 0) / jobPositionStats.length)
+      : 0;
+
+    return {
+      totalJobPositions: jobPositionStats.length,
+      totalEmployees,
+      averageCompletionRate,
+      bestPerformingJobPosition: jobPositionStats.length > 0
+        ? jobPositionStats.reduce((best, current) => 
+            current.stats.averageCompletionRate > best.stats.averageCompletionRate ? current : best
+          )
+        : null,
+      needsImprovementJobPositions: jobPositionStats.filter(jp => 
+        jp.stats.averageCompletionRate < 85
+      ).length
+    };
+  }
+
+  private calculateTimePerformanceSummary(timeSeriesData: any[]) {
+    if (timeSeriesData.length === 0) {
+      return {
+        totalPeriods: 0,
+        averageCompletionRate: 0,
+        bestPeriod: null,
+        worstPeriod: null,
+        trend: 'stable'
+      };
+    }
+
+    const averageCompletionRate = Math.round(
+      timeSeriesData.reduce((sum, data) => sum + data.completionRate, 0) / timeSeriesData.length
+    );
+
+    const bestPeriod = timeSeriesData.reduce((best, current) =>
+      current.completionRate > best.completionRate ? current : best
+    );
+
+    const worstPeriod = timeSeriesData.reduce((worst, current) =>
+      current.completionRate < worst.completionRate ? current : worst
+    );
+
+    // Calculate trend (simple comparison of first half vs second half)
+    const midPoint = Math.floor(timeSeriesData.length / 2);
+    const firstHalfAvg = timeSeriesData.slice(0, midPoint)
+      .reduce((sum, data) => sum + data.completionRate, 0) / midPoint;
+    const secondHalfAvg = timeSeriesData.slice(midPoint)
+      .reduce((sum, data) => sum + data.completionRate, 0) / (timeSeriesData.length - midPoint);
+
+    let trend = 'stable';
+    if (secondHalfAvg > firstHalfAvg + 5) trend = 'improving';
+    else if (secondHalfAvg < firstHalfAvg - 5) trend = 'declining';
+
+    return {
+      totalPeriods: timeSeriesData.length,
+      averageCompletionRate,
+      bestPeriod,
+      worstPeriod,
+      trend
+    };
+  }
+
   // Helper methods
   private calculateRankingCounts(employeeRankings: any[]) {
     const counts = {
@@ -718,21 +1206,21 @@ export class RankingService {
       case Role.SUPERADMIN:
       case Role.ADMIN:
         return true;
-      case Role.OFFICE_MANAGER: {
-        const employee = await this.prisma.user.findUnique({
-          where: { id: employeeId },
-          select: { officeId: true }
-        });
-        return employee?.officeId === currentUser.officeId;
-      }
-      case Role.OFFICE_ADMIN: {
-        const empDept = await this.prisma.user.findUnique({
-          where: { id: employeeId },
-          include: { jobPosition: { select: { departmentId: true } } }
-        });
-        const currentUserDept = await this.getUserDepartmentId(currentUser.id);
-        return empDept?.jobPosition?.departmentId === currentUserDept;
-      }
+      // case Role.OFFICE_MANAGER: {
+      //   const employee = await this.prisma.user.findUnique({
+      //     where: { id: employeeId },
+      //     select: { officeId: true }
+      //   });
+      //   return employee?.officeId === currentUser.officeId;
+      // }
+      // case Role.OFFICE_ADMIN: {
+      //   const empDept = await this.prisma.user.findUnique({
+      //     where: { id: employeeId },
+      //     include: { jobPosition: { select: { departmentId: true } } }
+      //   });
+      //   const currentUserDept = await this.getUserDepartmentId(currentUser.id);
+      //   return empDept?.jobPosition?.departmentId === currentUserDept;
+      // }
       default:
         return currentUser.id === employeeId;
     }
@@ -743,17 +1231,17 @@ export class RankingService {
       case Role.SUPERADMIN:
       case Role.ADMIN:
         return true;
-      case Role.OFFICE_MANAGER: {
-        const department = await this.prisma.department.findUnique({
-          where: { id: departmentId },
-          select: { officeId: true }
-        });
-        return department?.officeId === currentUser.officeId;
-      }
-      case Role.OFFICE_ADMIN: {
-        const currentUserDept = await this.getUserDepartmentId(currentUser.id);
-        return currentUserDept === departmentId;
-      }
+      // case Role.OFFICE_MANAGER: {
+      //   const department = await this.prisma.department.findUnique({
+      //     where: { id: departmentId },
+      //     select: { officeId: true }
+      //   });
+      //   return department?.officeId === currentUser.officeId;
+      // }
+      // case Role.OFFICE_ADMIN: {
+      //   const currentUserDept = await this.getUserDepartmentId(currentUser.id);
+      //   return currentUserDept === departmentId;
+      // }
       default:
         return false;
     }
@@ -764,8 +1252,6 @@ export class RankingService {
       case Role.SUPERADMIN:
       case Role.ADMIN:
         return true;
-      case Role.OFFICE_MANAGER:
-        return currentUser.officeId === officeId;
       default:
         return false;
     }
@@ -773,12 +1259,6 @@ export class RankingService {
 
   private applyRoleBasedFiltering(currentUser: any, whereClause: any) {
     switch (currentUser.role) {
-      case Role.OFFICE_MANAGER:
-        whereClause.officeId = currentUser.officeId;
-        break;
-      case Role.OFFICE_ADMIN:
-        // This will be handled in the query
-        break;
       case Role.USER:
         whereClause.id = currentUser.id;
         break;
@@ -791,18 +1271,6 @@ export class RankingService {
       case Role.ADMIN:
         // No filtering - can see all departments
         break;
-      case Role.OFFICE_MANAGER:
-        whereClause.officeId = currentUser.officeId;
-        break;
-      case Role.OFFICE_ADMIN: {
-        // Get departments within the user's department scope
-        // For now, just the user's own department
-        const userDepartmentId = this.getUserDepartmentIdSync(currentUser);
-        if (userDepartmentId) {
-          whereClause.id = userDepartmentId;
-        }
-        break;
-      }
       default:
         // Regular users shouldn't access department rankings
         whereClause.id = 'non-existent-id'; // This will return empty results
@@ -816,10 +1284,6 @@ export class RankingService {
       case Role.ADMIN:
         // No filtering - can see all offices
         break;
-      case Role.OFFICE_MANAGER:
-        whereClause.id = currentUser.officeId;
-        break;
-      case Role.OFFICE_ADMIN:
       case Role.USER:
         // Office admins and users can only see their own office
         whereClause.id = currentUser.officeId;

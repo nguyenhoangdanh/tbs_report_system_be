@@ -1,590 +1,369 @@
-import {
-  Injectable,
-  ForbiddenException,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { Role } from '@prisma/client';
-import { getCurrentWeek, calculateDaysOverdue } from '../common/utils/week-utils';
+import { getCurrentWorkWeek } from '../common/utils/week-utils';
+
+interface HierarchyFilters {
+  weekNumber?: number;
+  year?: number;
+  month?: number;
+  officeId?: string;
+  departmentId?: string;
+  page?: number;
+  limit?: number;
+  status?: 'not_submitted' | 'incomplete' | 'completed' | 'all';
+  weeks?: number;
+}
 
 @Injectable()
 export class HierarchyReportsService {
-  private readonly logger = new Logger(HierarchyReportsService.name);
-
   constructor(private prisma: PrismaService) {}
 
-  // Fixed helper method - ensure consistent integer percentage calculation
-    // Fixed helper method - ensure consistent percentage calculation with 2 decimal places
-  private calculatePercentage(numerator: number, denominator: number): number {
-    if (denominator === 0) return 0;
-    const percentage = (numerator / denominator) * 100;
-    return Math.round(percentage * 100) / 100; // Round to 2 decimal places
-  }
-
-  // Helper method for integer percentage (when we specifically want whole numbers)
-  private calculateIntegerPercentage(numerator: number, denominator: number): number {
-    if (denominator === 0) return 0;
-    return Math.round((numerator / denominator) * 100);
-  }
-
-  // Helper method to calculate ranking distribution
-  private calculateRankingDistribution(completionRates: number[]): {
-    excellent: { count: number; percentage: number }
-    good: { count: number; percentage: number }
-    average: { count: number; percentage: number }
-    poor: { count: number; percentage: number }
-    fail: { count: number; percentage: number }
-  } {
-    const total = completionRates.length
-    
-    if (total === 0) {
-      return {
-        excellent: { count: 0, percentage: 0 },
-        good: { count: 0, percentage: 0 },
-        average: { count: 0, percentage: 0 },
-        poor: { count: 0, percentage: 0 },
-        fail: { count: 0, percentage: 0 }
-      }
-    }
-
-    const excellent = completionRates.filter(rate => rate === 100).length
-    const good = completionRates.filter(rate => rate >= 95 && rate < 100).length
-    const average = completionRates.filter(rate => rate >= 90 && rate < 95).length
-    const poor = completionRates.filter(rate => rate >= 85 && rate < 90).length
-    const fail = completionRates.filter(rate => rate < 85).length
-
-    return {
-      excellent: { count: excellent, percentage: this.calculatePercentage(excellent, total) },
-      good: { count: good, percentage: this.calculatePercentage(good, total) },
-      average: { count: average, percentage: this.calculatePercentage(average, total) },
-      poor: { count: poor, percentage: this.calculatePercentage(poor, total) },
-      fail: { count: fail, percentage: this.calculatePercentage(fail, total) }
-    }
-  }
-
-  async getOfficesOverview(
-    currentUser: any,
-    weekNumber?: number,
-    year?: number,
-  ) {
-    // Only ADMIN and SUPERADMIN can see all offices
-    if (![Role.ADMIN, Role.SUPERADMIN].includes(currentUser.role)) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = weekNumber || currentWeek;
-    const targetYear = year || currentYear;
-
-    try {
-      const offices = await this.prisma.office.findMany({
-        include: {
-          departments: {
-            include: {
-              jobPositions: {
-                include: {
-                  users: {
-                    where: { isActive: true },
-                    include: {
-                      reports: {
-                        where: {
-                          weekNumber: targetWeek,
-                          year: targetYear,
-                        },
-                        include: {
-                          tasks: {
-                            select: {
-                              isCompleted: true,
-                              reasonNotDone: true,
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
+  /**
+   * Management hierarchy view - Group by Position (chức vụ quản lý)
+   */
+  private async getManagementHierarchyView(userId: string, userRole: Role, weekNumber: number, year: number, filters: HierarchyFilters = {}) {
+    // Get management positions - CHỈ dựa trên isManagement và tên chức danh
+    const positions = await this.prisma.position.findMany({
+      where: {
+        isReportable: true,
+        // Kết hợp nhiều điều kiện để xác định management positions
+        OR: [
+          { isManagement: true }, // Đã được set rõ ràng
+          // Hoặc dựa trên tên chức danh
+          { 
+            name: {
+              contains: 'giám đốc',
+              mode: 'insensitive'
+            }
           },
-          _count: {
-            select: {
-              departments: true,
-              users: { where: { isActive: true } },
-            },
+          { 
+            name: {
+              contains: 'trưởng',
+              mode: 'insensitive'
+            }
           },
-        },
-        orderBy: [
-          { type: 'asc' },
-          { name: 'asc' }
+          { 
+            name: {
+              contains: 'phó',
+              mode: 'insensitive'
+            }
+          },
+          { 
+            name: {
+              contains: 'manager',
+              mode: 'insensitive'
+            }
+          },
+          { 
+            name: {
+              contains: 'leader',
+              mode: 'insensitive'
+            }
+          },
+          { 
+            name: {
+              contains: 'supervisor',
+              mode: 'insensitive'
+            }
+          }
         ],
-      });
-
-      const sortedOffices = this.sortOffices(offices);
-
-      const officesStats = sortedOffices.map((office) => {
-        const allUsers = office.departments.flatMap((dept) =>
-          dept.jobPositions.flatMap((jp) => jp.users),
-        );
-
-        const usersWithReports = allUsers.filter(
-          (user) => user.reports.length > 0,
-        );
-
-        const usersWithCompletedReports = usersWithReports.filter((user) =>
-          user.reports.some((report) => report.isCompleted),
-        );
-
-        // Calculate task completion for this office
-        const totalTasks = usersWithReports.reduce(
-          (sum, user) =>
-            sum +
-            user.reports.reduce(
-              (taskSum, report) => taskSum + report.tasks.length,
-              0,
-            ),
-          0,
-        );
-
-        const completedTasks = usersWithReports.reduce(
-          (sum, user) =>
-            sum +
-            user.reports.reduce(
-              (taskSum, report) =>
-                taskSum + report.tasks.filter((task) => task.isCompleted).length,
-              0,
-            ),
-          0,
-        );
-
-        // Calculate overall office task completion rate
-        const officeTaskCompletionRate = this.calculatePercentage(completedTasks, totalTasks);
-
-        // Lý do chưa hoàn thành task
-        const incompleteReasons = new Map<string, number>();
-        usersWithReports.forEach((user) => {
-          user.reports.forEach((report) => {
-            report.tasks
-              .filter((task) => !task.isCompleted)
-              .forEach((task) => {
-                const reason = task.reasonNotDone?.trim() || 'Không có lý do';
-                incompleteReasons.set(reason, (incompleteReasons.get(reason) || 0) + 1);
-              });
-          });
-        });
-
-        const topIncompleteReasons = Array.from(incompleteReasons.entries())
-          .map(([reason, count]) => ({ reason, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5);
-
-        return {
-          id: office.id,
-          name: office.name,
-          type: office.type,
-          description: office.description,
-          stats: {
-            totalDepartments: office._count.departments,
-            totalUsers: allUsers.length,
-            usersWithReports: usersWithReports.length,
-            usersWithCompletedReports: usersWithCompletedReports.length,
-            usersWithoutReports: allUsers.length - usersWithReports.length,
-            totalTasks,
-            completedTasks,
-            // Fixed percentage calculations - use actual numbers, not office averages
-            reportSubmissionRate: this.calculatePercentage(usersWithReports.length, allUsers.length),
-            reportCompletionRate: this.calculatePercentage(usersWithCompletedReports.length, usersWithReports.length),
-            taskCompletionRate: officeTaskCompletionRate,
-            topIncompleteReasons,
-          },
-        };
-      });
-
-      // Calculate ranking distribution for offices
-      const officeCompletionRates = officesStats.map(office => office.stats.taskCompletionRate);
-      const officeRankingDistribution = this.calculateRankingDistribution(officeCompletionRates);
-
-      // Calculate overall totals (not averages)
-      const totalUsers = officesStats.reduce((sum, office) => sum + office.stats.totalUsers, 0);
-      const totalUsersWithReports = officesStats.reduce((sum, office) => sum + office.stats.usersWithReports, 0);
-      const totalUsersWithCompletedReports = officesStats.reduce((sum, office) => sum + office.stats.usersWithCompletedReports, 0);
-      const totalTasks = officesStats.reduce((sum, office) => sum + office.stats.totalTasks, 0);
-      const totalCompletedTasks = officesStats.reduce((sum, office) => sum + office.stats.completedTasks, 0);
-
-      return {
-        weekNumber: targetWeek,
-        year: targetYear,
-        offices: officesStats,
-        summary: {
-          totalOffices: sortedOffices.length,
-          totalDepartments: officesStats.reduce((sum, office) => sum + office.stats.totalDepartments, 0),
-          totalUsers,
-          totalUsersWithReports,
-          totalUsersWithCompletedReports,
-          totalUsersWithoutReports: totalUsers - totalUsersWithReports,
-          // Fixed: Calculate actual percentages from total numbers, not office averages
-          averageSubmissionRate: this.calculatePercentage(totalUsersWithReports, totalUsers),
-          averageCompletionRate: this.calculatePercentage(totalCompletedTasks, totalTasks),
-          rankingDistribution: officeRankingDistribution,
-        },
-      };
-    } catch (error) {
-      this.logger.error('Error in getOfficesOverview:', error);
-      throw error;
-    }
-  }
-
-  async getOfficeDetails(
-    officeId: string,
-    currentUser: any,
-    weekNumber?: number,
-    year?: number,
-  ) {
-    // Check access permissions
-    if (!this.canAccessOffice(currentUser, officeId)) {
-      throw new ForbiddenException('Access denied to this office');
-    }
-
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = weekNumber || currentWeek;
-    const targetYear = year || currentYear;
-
-    try {
-      const office = await this.prisma.office.findUnique({
-        where: { id: officeId },
-        include: {
-          departments: {
-            include: {
-              jobPositions: {
-                include: {
-                  position: true,
-                  users: {
-                    where: { isActive: true },
-                    include: {
-                      reports: {
-                        where: {
-                          weekNumber: targetWeek,
-                          year: targetYear,
-                        },
-                        include: {
-                          tasks: {
-                            select: {
-                              taskName: true,
-                              isCompleted: true,
-                              reasonNotDone: true,
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            orderBy: { name: 'asc' },
-          },
-        },
-      });
-
-      if (!office) {
-        throw new NotFoundException('Office not found');
-      }
-
-      const sortedDepartments = this.sortDepartments(office.departments);
-
-      const departmentStats = sortedDepartments.map((department) => {
-        const allUsers = department.jobPositions.flatMap((jp) => jp.users);
-        
-        const usersWithReports = allUsers.filter(
-          (user) => user.reports.length > 0,
-        );
-        
-        const usersWithCompletedReports = usersWithReports.filter((user) =>
-          user.reports.some((report) => report.isCompleted),
-        );
-
-        // Calculate task completion for this department
-        const totalTasks = usersWithReports.reduce(
-          (sum, user) =>
-            sum +
-            user.reports.reduce(
-              (taskSum, report) => taskSum + report.tasks.length,
-              0,
-            ),
-          0,
-        );
-
-        const completedTasks = usersWithReports.reduce(
-          (sum, user) =>
-            sum +
-            user.reports.reduce(
-              (taskSum, report) =>
-                taskSum + report.tasks.filter((task) => task.isCompleted).length,
-              0,
-            ),
-          0,
-        );
-
-        // Calculate department task completion rate from all users
-        const departmentTaskCompletionRate = this.calculatePercentage(completedTasks, totalTasks);
-
-        const jobPositionsBreakdown = department.jobPositions.map((jp) => {
-          const jpUsers = jp.users;
-          const jpUsersWithReports = jpUsers.filter(
-            (user) => user.reports.length > 0,
-          );
-          const jpUsersWithCompletedReports = jpUsersWithReports.filter((user) =>
-            user.reports.some((report) => report.isCompleted),
-          );
-
-          return {
-            id: jp.id,
-            jobName: jp.jobName,
-            positionName: jp.position.name,
-            totalUsers: jpUsers.length,
-            usersWithReports: jpUsersWithReports.length,
-            usersWithCompletedReports: jpUsersWithCompletedReports.length,
-            usersWithoutReports: jpUsers.length - jpUsersWithReports.length,
-          };
-        });
-
-        // Get top incomplete reasons
-        const incompleteReasons = new Map<string, number>();
-        usersWithReports.forEach((user) => {
-          user.reports.forEach((report) => {
-            report.tasks
-              .filter((task) => !task.isCompleted)
-              .forEach((task) => {
-                const reason = task.reasonNotDone?.trim() || 'Không có lý do';
-                incompleteReasons.set(reason, (incompleteReasons.get(reason) || 0) + 1);
-              });
-          });
-        });
-
-        const topIncompleteReasons = Array.from(incompleteReasons.entries())
-          .map(([reason, count]) => ({ reason, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5);
-
-        return {
-          id: department.id,
-          name: department.name,
-          description: department.description,
-          stats: {
-            totalUsers: allUsers.length,
-            usersWithReports: usersWithReports.length,
-            usersWithCompletedReports: usersWithCompletedReports.length,
-            usersWithoutReports: allUsers.length - usersWithReports.length,
-            totalTasks,
-            completedTasks,
-            reportSubmissionRate: this.calculatePercentage(usersWithReports.length, allUsers.length),
-            reportCompletionRate: this.calculatePercentage(usersWithCompletedReports.length, usersWithReports.length),
-            taskCompletionRate: departmentTaskCompletionRate, // Backend calculated from all users
-            topIncompleteReasons,
-          },
-          jobPositionsBreakdown,
-        };
-      });
-
-      // Calculate ranking distribution for departments
-      const departmentCompletionRates = departmentStats.map(dept => dept.stats.taskCompletionRate);
-      const departmentRankingDistribution = this.calculateRankingDistribution(departmentCompletionRates);
-
-      // Calculate office totals (not averages)
-      const totalUsers = departmentStats.reduce((sum, dept) => sum + dept.stats.totalUsers, 0);
-      const totalUsersWithReports = departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithReports, 0);
-      const totalUsersWithCompletedReports = departmentStats.reduce((sum, dept) => sum + dept.stats.usersWithCompletedReports, 0);
-      const totalTasks = departmentStats.reduce((sum, dept) => sum + dept.stats.totalTasks, 0);
-      const totalCompletedTasks = departmentStats.reduce((sum, dept) => sum + dept.stats.completedTasks, 0);
-
-      return {
-        office: {
-          id: office.id,
-          name: office.name,
-          type: office.type,
-          description: office.description,
-        },
-        weekNumber: targetWeek,
-        year: targetYear,
-        departments: departmentStats,
-        summary: {
-          totalDepartments: departmentStats.length,
-          totalUsers,
-          totalUsersWithReports,
-          totalUsersWithCompletedReports,
-          totalUsersWithoutReports: totalUsers - totalUsersWithReports,
-          // Fixed: Calculate actual percentages from totals
-          averageSubmissionRate: this.calculatePercentage(totalUsersWithReports, totalUsers),
-          averageCompletionRate: this.calculatePercentage(totalCompletedTasks, totalTasks),
-          rankingDistribution: departmentRankingDistribution,
-        },
-      };
-    } catch (error) {
-      this.logger.error('Error in getOfficeDetails:', error);
-      throw error;
-    }
-  }
-
-  async getDepartmentDetails(
-    departmentId: string,
-    currentUser: any,
-    weekNumber?: number,
-    year?: number,
-  ) {
-    // Check access permissions
-    if (!await this.canAccessDepartment(currentUser, departmentId)) {
-      throw new ForbiddenException('Access denied to this department');
-    }
-
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = weekNumber || currentWeek;
-    const targetYear = year || currentYear;
-
-    const department = await this.prisma.department.findUnique({
-      where: { id: departmentId },
-      include: {
-        office: true,
         jobPositions: {
-          include: {
-            position: true,
+          some: {
             users: {
-              where: { isActive: true },
+              some: { 
+                isActive: true,
+                ...(await this.buildUserAccessFilter(userId, userRole))
+              }
+            }
+          }
+        }
+      },
+      include: {
+        jobPositions: {
+          where: {
+            isActive: true,
+            users: {
+              some: { 
+                isActive: true,
+                ...(await this.buildUserAccessFilter(userId, userRole))
+              }
+            }
+          },
+          include: {
+            users: {
+              where: { 
+                isActive: true,
+                ...(await this.buildUserAccessFilter(userId, userRole))
+              },
               include: {
+                office: true,
                 jobPosition: {
                   include: {
-                    position: true,
-                  },
+                    department: {
+                      include: {
+                        office: true
+                      }
+                    }
+                  }
                 },
                 reports: {
-                  where: {
-                    weekNumber: targetWeek,
-                    year: targetYear,
-                  },
+                  where: { weekNumber, year },
                   include: {
-                    tasks: {
-                      select: {
-                        taskName: true,
-                        isCompleted: true,
-                        reasonNotDone: true,
-                        monday: true,
-                        tuesday: true,
-                        wednesday: true,
-                        thursday: true,
-                        friday: true,
-                        saturday: true,
-                        sunday: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+                    tasks: true
+                  }
+                }
+              }
+            }
+          }
+        }
       },
+      orderBy: [
+        { level: 'asc' }, // Level vẫn dùng để sắp xếp
+        { name: 'asc' }
+      ]
     });
 
-    if (!department) {
-      throw new NotFoundException('Department not found');
-    }
+    console.log(`Found ${positions.length} management positions (chức vụ quản lý)`);
 
-    const allUsers = department.jobPositions.flatMap((jp) => jp.users);
-
-    const userStats = allUsers.map((user) => {
-      const userReport = user.reports[0];
-      const totalTasks = userReport?.tasks.length || 0;
-      const completedTasks = userReport?.tasks.filter((task) => task.isCompleted).length || 0;
-
-      // Calculate work days
-      const workDays = userReport?.tasks.reduce((maxDays, task) => {
-        const taskDays = [
-          task.monday, task.tuesday, task.wednesday, task.thursday,
-          task.friday, task.saturday, task.sunday
-        ].filter(Boolean).length;
-        return Math.max(maxDays, taskDays);
-      }, 0) || 0;
-
-      const incompleteReasons = userReport?.tasks
-        .filter((task) => !task.isCompleted)
-        .map((task) => ({
-          taskName: task.taskName,
-          reason: task.reasonNotDone?.trim() || 'Không có lý do',
-        })) || [];
-
-      // Backend calculated task completion rate for individual user
-      const userTaskCompletionRate = this.calculatePercentage(completedTasks, totalTasks);
-
+    const positionStats = positions.map(position => {
+      const allUsers = position.jobPositions.flatMap(jp => jp.users);
+      const stats = this.calculatePositionStats(allUsers, weekNumber, year);
+      
+      console.log(`Management Position ${position.name} (level ${position.level}): ${allUsers.length} users, completion rate: ${stats.averageCompletionRate}%`);
+      
       return {
-        id: user.id,
-        employeeCode: user.employeeCode,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        jobPosition: {
-          id: user.jobPosition.id,
-          jobName: user.jobPosition.jobName,
-          positionName: user.jobPosition.position.name,
+        position: {
+          id: position.id,
+          name: position.name,
+          level: position.level,
+          description: position.description,
+          isManagement: position.isManagement || position.level <= 5 // Fallback logic
         },
-        reportStatus: {
-          hasReport: !!userReport,
-          isCompleted: userReport?.isCompleted || false,
-          isLocked: userReport?.isLocked || false,
-          totalTasks,
-          completedTasks,
-          workDaysCount: workDays,
-          taskCompletionRate: userTaskCompletionRate, // Backend calculated
-          incompleteReasons,
-        },
+        stats,
+        userCount: allUsers.length,
+        departmentBreakdown: this.calculateDepartmentBreakdown(allUsers),
+        users: allUsers.map(user => this.mapUserToPositionUser(user))
       };
     });
 
-    // Calculate ranking distribution for users
-    const userCompletionRates = userStats
-      .filter(user => user.reportStatus.hasReport)
-      .map(user => user.reportStatus.taskCompletionRate);
-    const userRankingDistribution = this.calculateRankingDistribution(userCompletionRates);
-
-    // Calculate department average from actual user completion rates
-    const usersWithReports = userStats.filter(user => user.reportStatus.hasReport);
-    const departmentAverageTaskCompletion = usersWithReports.length > 0
-      ? Math.round(usersWithReports.reduce((sum, user) => sum + user.reportStatus.taskCompletionRate, 0) / usersWithReports.length)
-      : 0;
+    const summary = this.calculateManagementSummary(positionStats);
+    console.log('Management Summary:', JSON.stringify(summary, null, 2));
 
     return {
-      department: {
-        id: department.id,
-        name: department.name,
-        description: department.description,
-        office: {
-          id: department.office.id,
-          name: department.office.name,
-          type: department.office.type,
-        },
-      },
-      weekNumber: targetWeek,
-      year: targetYear,
-      users: userStats,
-      summary: {
-        totalUsers: userStats.length,
-        usersWithReports: userStats.filter((user) => user.reportStatus.hasReport).length,
-        completedReports: userStats.filter((user) => user.reportStatus.isCompleted).length,
-        averageTaskCompletion: departmentAverageTaskCompletion, // Backend calculated average
-        rankingDistribution: userRankingDistribution, // Add ranking distribution
-      },
+      weekNumber,
+      year,
+      viewType: 'management' as const,
+      groupBy: 'position' as const,
+      positions: positionStats,
+      summary
     };
   }
 
-  async getUserDetails(
-    userId: string,
-    currentUser: any,
-    weekNumber?: number,
-    year?: number,
-    limit = 10,
-  ) {
-    // Check access permissions
-    if (!await this.canAccessUser(currentUser, userId)) {
-      throw new ForbiddenException('Access denied to this user');
+  /**
+   * Staff hierarchy view - Group by JobPosition (vị trí công việc nhân viên)
+   */
+  private async getStaffHierarchyView(userId: string, userRole: Role, weekNumber: number, year: number, filters: HierarchyFilters = {}) {
+    // Get staff job positions - Loại trừ management positions
+    const jobPositions = await this.prisma.jobPosition.findMany({
+      where: {
+        isActive: true,
+        position: { 
+          // CHỈ lấy positions KHÔNG phải management
+          AND: [
+            { isManagement: false },
+            // VÀ không chứa các từ khóa quản lý
+            { 
+              name: {
+                notIn: ['TGĐ', 'Tổng Giám Đốc', 'Giám Đốc', 'Phó Giám Đốc'],
+                mode: 'insensitive'
+              }
+            },
+            {
+              NOT: {
+                OR: [
+                  { name: { contains: 'trưởng', mode: 'insensitive' } },
+                  { name: { contains: 'phó', mode: 'insensitive' } },
+                  { name: { contains: 'manager', mode: 'insensitive' } },
+                  { name: { contains: 'leader', mode: 'insensitive' } },
+                  { name: { contains: 'supervisor', mode: 'insensitive' } }
+                ]
+              }
+            }
+          ]
+        },
+        users: {
+          some: { 
+            isActive: true,
+            ...(await this.buildUserAccessFilter(userId, userRole))
+          }
+        }
+      },
+      include: {
+        position: true,
+        department: {
+          include: {
+            office: true
+          }
+        },
+        users: {
+          where: { 
+            isActive: true,
+            // Apply role-based access filter
+            ...(await this.buildUserAccessFilter(userId, userRole))
+          },
+          include: {
+            office: true,
+            jobPosition: {
+              include: {
+                department: {
+                  include: {
+                    office: true
+                  }
+                }
+              }
+            },
+            reports: {
+              where: { weekNumber, year },
+              include: {
+                tasks: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: [
+        { department: { name: 'asc' } },
+        { jobName: 'asc' }
+      ]
+    });
+
+    console.log(`Found ${jobPositions.length} job positions (vị trí công việc)`);
+
+    const jobPositionStats = jobPositions.map(jobPosition => {
+      const stats = this.calculateJobPositionStats(jobPosition.users, weekNumber, year);
+      
+      console.log(`JobPosition ${jobPosition.jobName}: ${jobPosition.users.length} users, completion rate: ${stats.averageCompletionRate}%`);
+      
+      return {
+        jobPosition: {
+          id: jobPosition.id,
+          jobName: jobPosition.jobName,
+          code: jobPosition.code,
+          description: jobPosition.description,
+          department: jobPosition.department,
+          position: jobPosition.position
+        },
+        stats,
+        userCount: jobPosition.users.length,
+        users: jobPosition.users.map(user => this.mapUserToPositionUser(user))
+      };
+    });
+
+    const summary = this.calculateStaffSummary(jobPositionStats);
+    console.log('Staff Summary:', JSON.stringify(summary, null, 2));
+
+    return {
+      weekNumber,
+      year,
+      viewType: 'staff' as const,
+      groupBy: 'jobPosition' as const,
+      jobPositions: jobPositionStats,
+      summary
+    };
+  }
+
+  /**
+   * Mixed hierarchy view - Trả về cả positions và jobPositions
+   */
+  private async getMixedHierarchyView(userId: string, userRole: Role, weekNumber: number, year: number, filters: HierarchyFilters = {}) {
+    // Get both management positions and staff job positions
+    const [managementView, staffView] = await Promise.all([
+      this.getManagementHierarchyView(userId, userRole, weekNumber, year, filters),
+      this.getStaffHierarchyView(userId, userRole, weekNumber, year, filters)
+    ]);
+
+    // Combine summaries
+    const combinedSummary = {
+      totalPositions: managementView.positions.length,
+      totalJobPositions: staffView.jobPositions.length,
+      totalUsers: managementView.summary.totalUsers + staffView.summary.totalUsers,
+      totalUsersWithReports: managementView.summary.totalUsersWithReports + staffView.summary.totalUsersWithReports,
+      averageSubmissionRate: Math.round(
+        ((managementView.summary.averageSubmissionRate + staffView.summary.averageSubmissionRate) / 2)
+      ),
+      averageCompletionRate: Math.round(
+        ((managementView.summary.averageCompletionRate + staffView.summary.averageCompletionRate) / 2)
+      ),
+      managementSummary: managementView.summary,
+      staffSummary: staffView.summary
+    };
+
+    return {
+      weekNumber,
+      year,
+      viewType: 'mixed' as const,
+      groupBy: 'mixed' as const,
+      positions: managementView.positions, // Chức vụ quản lý
+      jobPositions: staffView.jobPositions, // Vị trí công việc
+      summary: combinedSummary
+    };
+  }
+
+  // Đơn giản hóa buildUserAccessFilter - bỏ logic level
+  private async buildUserAccessFilter(userId: string, userRole: Role) {
+    const accessFilter: any = {};
+    
+    if (userRole === Role.SUPERADMIN || userRole === Role.ADMIN) {
+      // SUPERADMIN và ADMIN có thể xem tất cả
+      return accessFilter;
     }
+    
+    if (userRole === Role.USER) {
+      // Lấy thông tin user để xác định cấp độ
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          jobPosition: {
+            include: {
+              position: true,
+              department: true
+            }
+          }
+        }
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Nếu user có position.canViewHierarchy = true, có thể xem cấp dưới trong cùng department
+      if (user.jobPosition?.position?.canViewHierarchy === true) {
+        // Management user có thể xem trong cùng department
+        accessFilter.jobPosition = {
+          departmentId: user.jobPosition.departmentId
+        };
+      } else {
+        // Regular user chỉ có thể xem đồng nghiệp cùng cấp trong department
+        accessFilter.jobPosition = {
+          departmentId: user.jobPosition.departmentId,
+          position: {
+            isManagement: false // CHỈ xem non-management positions
+          }
+        };
+      }
+    }
+    
+    return accessFilter;
+  }
+
+  /**
+   * Get hierarchy view based on user role and permissions
+   */
+  async getMyHierarchyView(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
+    const { weekNumber, year } = this.getWeekFilters(filters);
+
+    console.log(`Getting hierarchy view for user ${userId}, role ${userRole}, week ${weekNumber}/${year}`);
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -592,23 +371,646 @@ export class HierarchyReportsService {
         office: true,
         jobPosition: {
           include: {
-            position: true,
-            department: {
-              include: {
-                office: true,
-              },
-            },
-          },
-        },
-      },
+            department: true,
+            position: true
+          }
+        }
+      }
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Get user's reports
-    const reportsWhere: any = { userId };
+    console.log(`User position: ${user.jobPosition?.position?.name}, canViewHierarchy: ${user.jobPosition?.position?.canViewHierarchy}, isManagement: ${user.jobPosition?.position?.isManagement}, level: ${user.jobPosition?.position?.level}, role: ${userRole}`);
+
+    // Xác định quyền xem dựa trên role và position
+    const isAdminRole = userRole === Role.SUPERADMIN || userRole === Role.ADMIN;
+    const userCanViewHierarchy = user.jobPosition?.position?.canViewHierarchy === true;
+
+    // Check if there are management positions and job positions accessible to user
+    const [managementPositionCount, jobPositionCount] = await Promise.all([
+      this.prisma.position.count({
+        where: {
+          isReportable: true,
+          OR: [
+            { isManagement: true },
+            { name: { contains: 'giám đốc', mode: 'insensitive' } },
+            { name: { contains: 'trưởng', mode: 'insensitive' } },
+            { name: { contains: 'phó', mode: 'insensitive' } },
+            { name: { contains: 'manager', mode: 'insensitive' } },
+            { name: { contains: 'leader', mode: 'insensitive' } }
+          ],
+          jobPositions: {
+            some: {
+              users: {
+                some: { 
+                  isActive: true,
+                  ...(await this.buildUserAccessFilter(userId, userRole))
+                }
+              }
+            }
+          }
+        }
+      }),
+      this.prisma.jobPosition.count({
+        where: {
+          isActive: true,
+          position: { 
+            AND: [
+              { isManagement: false },
+              {
+                NOT: {
+                  OR: [
+                    { name: { contains: 'trưởng', mode: 'insensitive' } },
+                    { name: { contains: 'phó', mode: 'insensitive' } },
+                    { name: { contains: 'manager', mode: 'insensitive' } },
+                    { name: { contains: 'leader', mode: 'insensitive' } }
+                  ]
+                }
+              }
+            ]
+          },
+          users: {
+            some: { 
+              isActive: true,
+              ...(await this.buildUserAccessFilter(userId, userRole))
+            }
+          }
+        }
+      })
+    ]);
+
+    console.log(`Management positions: ${managementPositionCount}, Job positions: ${jobPositionCount}`);
+
+    // Logic quyết định view type
+    if (isAdminRole) {
+      if (managementPositionCount > 0 && jobPositionCount > 0) {
+        console.log('Using Mixed Hierarchy View (Admin - both available)');
+        return this.getMixedHierarchyView(userId, userRole, weekNumber, year, filters);
+      } else if (managementPositionCount > 0) {
+        console.log('Using Management Hierarchy View (Admin - management only)');
+        return this.getManagementHierarchyView(userId, userRole, weekNumber, year, filters);
+      } else if (jobPositionCount > 0) {
+        console.log('Using Staff Hierarchy View (Admin - staff only)');
+        return this.getStaffHierarchyView(userId, userRole, weekNumber, year, filters);
+      }
+    } else if (userRole === Role.USER) {
+      if (userCanViewHierarchy) {
+        if (managementPositionCount > 0 && jobPositionCount > 0) {
+          console.log('Using Mixed Hierarchy View (Management User - both available)');
+          return this.getMixedHierarchyView(userId, userRole, weekNumber, year, filters);
+        } else if (managementPositionCount > 0) {
+          console.log('Using Management Hierarchy View (Management User)');
+          return this.getManagementHierarchyView(userId, userRole, weekNumber, year, filters);
+        } else if (jobPositionCount > 0) {
+          console.log('Using Staff Hierarchy View (Management User)');
+          return this.getStaffHierarchyView(userId, userRole, weekNumber, year, filters);
+        }
+      } else {
+        if (jobPositionCount > 0) {
+          console.log('Using Staff Hierarchy View (Regular User)');
+          return this.getStaffHierarchyView(userId, userRole, weekNumber, year, filters);
+        }
+      }
+    }
+
+    // Return empty response if no accessible data
+    console.log('No hierarchy data available for user');
+    return this.getEmptyHierarchyResponse(weekNumber, year);
+  }
+
+  private calculatePositionStats(users: any[], weekNumber: number, year: number) {
+    const totalUsers = users.length;
+    const usersWithReports = users.filter(u => u.reports && u.reports.length > 0).length;
+    const usersWithCompletedReports = users.filter(u => 
+      u.reports && u.reports.length > 0 && u.reports[0].isCompleted
+    ).length;
+
+    let totalTasks = 0;
+    let completedTasks = 0;
+    const completionRates: number[] = [];
+
+    users.forEach(user => {
+      if (user.reports && user.reports.length > 0) {
+        const report = user.reports[0];
+        const userTotalTasks = report.tasks ? report.tasks.length : 0;
+        const userCompletedTasks = report.tasks ? report.tasks.filter((t: any) => t.isCompleted).length : 0;
+        
+        totalTasks += userTotalTasks;
+        completedTasks += userCompletedTasks;
+        
+        const rate = userTotalTasks > 0 ? (userCompletedTasks / userTotalTasks) * 100 : 0;
+        completionRates.push(rate);
+      } else {
+        completionRates.push(0);
+      }
+    });
+
+    const averageCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    const submissionRate = totalUsers > 0 ? Math.round((usersWithReports / totalUsers) * 100) : 0;
+
+    return {
+      totalUsers,
+      usersWithReports,
+      usersWithCompletedReports,
+      usersWithoutReports: totalUsers - usersWithReports,
+      submissionRate,
+      totalTasks,
+      completedTasks,
+      averageCompletionRate,
+      positionRanking: this.calculateRanking(averageCompletionRate),
+      rankingDistribution: this.calculateRankingDistribution(completionRates)
+    };
+  }
+
+  private calculateJobPositionStats(users: any[], weekNumber: number, year: number) {
+    const totalUsers = users.length;
+    
+    if (totalUsers === 0) {
+      return {
+        totalUsers: 0,
+        usersWithReports: 0,
+        usersWithCompletedReports: 0,
+        usersWithoutReports: 0,
+        submissionRate: 0,
+        totalTasks: 0,
+        completedTasks: 0,
+        averageCompletionRate: 0,
+        positionRanking: 'POOR',
+        rankingDistribution: this.getEmptyRankingDistribution()
+      };
+    }
+
+    const usersWithReports = users.filter(u => u.reports && u.reports.length > 0).length;
+    const usersWithCompletedReports = users.filter(u => 
+      u.reports && u.reports.length > 0 && u.reports[0].isCompleted
+    ).length;
+
+    let totalTasks = 0;
+    let completedTasks = 0;
+    const completionRates: number[] = [];
+
+    users.forEach(user => {
+      if (user.reports && user.reports.length > 0) {
+        const report = user.reports[0];
+        const userTotalTasks = report.tasks ? report.tasks.length : 0;
+        const userCompletedTasks = report.tasks ? report.tasks.filter((t: any) => t.isCompleted).length : 0;
+        
+        totalTasks += userTotalTasks;
+        completedTasks += userCompletedTasks;
+        
+        const rate = userTotalTasks > 0 ? (userCompletedTasks / userTotalTasks) * 100 : 0;
+        completionRates.push(rate);
+      } else {
+        completionRates.push(0);
+      }
+    });
+
+    const averageCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    const submissionRate = totalUsers > 0 ? Math.round((usersWithReports / totalUsers) * 100) : 0;
+
+    return {
+      totalUsers,
+      usersWithReports,
+      usersWithCompletedReports,
+      usersWithoutReports: totalUsers - usersWithReports,
+      submissionRate,
+      totalTasks,
+      completedTasks,
+      averageCompletionRate,
+      positionRanking: this.calculateRanking(averageCompletionRate),
+      rankingDistribution: this.calculateRankingDistribution(completionRates)
+    };
+  }
+
+  private getEmptyRankingDistribution() {
+    return {
+      excellent: { count: 0, percentage: 0 },
+      good: { count: 0, percentage: 0 },
+      average: { count: 0, percentage: 0 },
+      belowAverage: { count: 0, percentage: 0 },
+      poor: { count: 0, percentage: 0 }
+    };
+  }
+
+  private calculateDepartmentBreakdown(users: any[]) {
+    const departmentMap = new Map();
+    
+    users.forEach(user => {
+      const deptId = user.jobPosition?.department?.id;
+      const deptName = user.jobPosition?.department?.name;
+      
+      if (deptId && deptName) {
+        if (!departmentMap.has(deptId)) {
+          departmentMap.set(deptId, {
+            id: deptId,
+            name: deptName,
+            userCount: 0,
+            usersWithReports: 0
+          });
+        }
+        
+        const dept = departmentMap.get(deptId);
+        dept.userCount++;
+        
+        if (user.reports && user.reports.length > 0) {
+          dept.usersWithReports++;
+        }
+      }
+    });
+    
+    return Array.from(departmentMap.values());
+  }
+
+  private calculateRanking(completionRate: number): string {
+    if (completionRate >= 100) return 'EXCELLENT';
+    if (completionRate >= 95) return 'GOOD';
+    if (completionRate >= 90) return 'AVERAGE';
+    if (completionRate >= 85) return 'BELOW_AVERAGE';
+    return 'POOR';
+  }
+
+  private calculateRankingDistribution(completionRates: number[]) {
+    const distribution = {
+      excellent: 0,
+      good: 0,
+      average: 0,
+      belowAverage: 0,
+      poor: 0
+    };
+
+    completionRates.forEach(rate => {
+      const ranking = this.calculateRanking(rate);
+      switch (ranking) {
+        case 'EXCELLENT':
+          distribution.excellent++;
+          break;
+        case 'GOOD':
+          distribution.good++;
+          break;
+        case 'AVERAGE':
+          distribution.average++;
+          break;
+        case 'BELOW_AVERAGE':
+          distribution.belowAverage++;
+          break;
+        case 'POOR':
+          distribution.poor++;
+          break;
+      }
+    });
+
+    const total = completionRates.length;
+    return {
+      excellent: { count: distribution.excellent, percentage: total > 0 ? Math.round((distribution.excellent / total) * 100) : 0 },
+      good: { count: distribution.good, percentage: total > 0 ? Math.round((distribution.good / total) * 100) : 0 },
+      average: { count: distribution.average, percentage: total > 0 ? Math.round((distribution.average / total) * 100) : 0 },
+      belowAverage: { count: distribution.belowAverage, percentage: total > 0 ? Math.round((distribution.belowAverage / total) * 100) : 0 },
+      poor: { count: distribution.poor, percentage: total > 0 ? Math.round((distribution.poor / total) * 100) : 0 }
+    };
+  }
+
+  private calculateManagementSummary(positionStats: any[]) {
+    const totalUsers = positionStats.reduce((sum, pos) => sum + pos.stats.totalUsers, 0);
+    const totalUsersWithReports = positionStats.reduce((sum, pos) => sum + pos.stats.usersWithReports, 0);
+    const averageCompletionRate = positionStats.length > 0
+      ? Math.round(positionStats.reduce((sum, pos) => sum + pos.stats.averageCompletionRate, 0) / positionStats.length)
+      : 0;
+
+    return {
+      totalPositions: positionStats.length,
+      totalUsers,
+      totalUsersWithReports,
+      averageSubmissionRate: totalUsers > 0 ? Math.round((totalUsersWithReports / totalUsers) * 100) : 0,
+      averageCompletionRate,
+      bestPerformingPosition: positionStats.length > 0 
+        ? positionStats.reduce((best, current) => 
+            current.stats.averageCompletionRate > best.stats.averageCompletionRate ? current : best
+          )
+        : null,
+      needsImprovementCount: positionStats.filter(pos => pos.stats.averageCompletionRate < 85).length
+    };
+  }
+
+  private calculateStaffSummary(jobPositionStats: any[]) {
+    if (jobPositionStats.length === 0) {
+      return {
+        totalJobPositions: 0,
+        totalUsers: 0,
+        totalUsersWithReports: 0,
+        averageSubmissionRate: 0,
+        averageCompletionRate: 0,
+        bestPerformingJobPosition: null,
+        needsImprovementCount: 0
+      };
+    }
+
+    const totalUsers = jobPositionStats.reduce((sum, jp) => sum + jp.stats.totalUsers, 0);
+    const totalUsersWithReports = jobPositionStats.reduce((sum, jp) => sum + jp.stats.usersWithReports, 0);
+    const averageCompletionRate = jobPositionStats.length > 0
+      ? Math.round(jobPositionStats.reduce((sum, jp) => sum + jp.stats.averageCompletionRate, 0) / jobPositionStats.length)
+      : 0;
+
+    const bestPerformingJobPosition = jobPositionStats.length > 0
+      ? jobPositionStats.reduce((best, current) => 
+          current.stats.averageCompletionRate > best.stats.averageCompletionRate ? current : best
+        )
+      : null;
+
+    return {
+      totalJobPositions: jobPositionStats.length,
+      totalUsers,
+      totalUsersWithReports,
+      averageSubmissionRate: totalUsers > 0 ? Math.round((totalUsersWithReports / totalUsers) * 100) : 0,
+      averageCompletionRate,
+      bestPerformingJobPosition,
+      needsImprovementCount: jobPositionStats.filter(jp => jp.stats.averageCompletionRate < 85).length
+    };
+  }
+
+  private async getUserOfficeId(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { officeId: true }
+    });
+    return user?.officeId || '';
+  }
+
+  private async getUserDepartmentId(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { jobPosition: { select: { departmentId: true } } }
+    });
+    return user?.jobPosition?.departmentId || '';
+  }
+
+  private getWeekFilters(filters: HierarchyFilters) {
+    const current = getCurrentWorkWeek();
+    return {
+      weekNumber: filters.weekNumber || current.weekNumber,
+      year: filters.year || current.year
+    };
+  }
+
+  // Add missing methods referenced in existing code
+  private getEmptyHierarchyResponse(weekNumber: number, year: number) {
+    return {
+      weekNumber,
+      year,
+      viewType: 'empty' as const,
+      groupBy: 'none' as const,
+      positions: [],
+      jobPositions: [],
+      summary: {
+        totalPositions: 0,
+        totalJobPositions: 0,
+        totalUsers: 0,
+        totalUsersWithReports: 0,
+        averageSubmissionRate: 0,
+        averageCompletionRate: 0
+      }
+    };
+  }
+
+  private mapUserToPositionUser(user: any) {
+    const report = user.reports && user.reports.length > 0 ? user.reports[0] : null;
+    let stats = {
+      hasReport: false,
+      isCompleted: false,
+      totalTasks: 0,
+      completedTasks: 0,
+      taskCompletionRate: 0
+    };
+
+    if (report) {
+      const totalTasks = report.tasks ? report.tasks.length : 0;
+      const completedTasks = report.tasks ? report.tasks.filter((t: any) => t.isCompleted).length : 0;
+      
+      stats = {
+        hasReport: true,
+        isCompleted: report.isCompleted,
+        totalTasks,
+        completedTasks,
+        taskCompletionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
+      };
+    }
+
+    return {
+      id: user.id,
+      employeeCode: user.employeeCode,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      fullName: `${user.firstName} ${user.lastName}`,
+      email: user.email,
+      office: user.office,
+      jobPosition: user.jobPosition,
+      stats
+    };
+  }
+
+  /**
+   * Get offices overview (Admin/Superadmin only)
+   */
+  async getOfficesOverview(userId: string, filters: HierarchyFilters = {}) {
+    const { weekNumber, year } = this.getWeekFilters(filters);
+
+    const offices = await this.prisma.office.findMany({
+      include: {
+        departments: {
+          include: {
+            // Fix: Remove invalid 'users' from _count
+            _count: {
+              select: { 
+                jobPositions: true
+              }
+            }
+          }
+        },
+        // Fix: Get users directly from office relation
+        users: {
+          where: { isActive: true },
+          include: {
+            reports: {
+              where: { weekNumber, year },
+              include: {
+                tasks: {
+                  select: {
+                    isCompleted: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { name: 'asc' }
+    });
+
+    const officesWithStats = offices.map(office => {
+      // Fix: Calculate user count properly from users relation
+      const userCount = office.users.length;
+      const stats = this.calculateOfficeStats(office.users, weekNumber, year);
+      
+      return {
+        office: {
+          id: office.id,
+          name: office.name,
+          type: office.type,
+          description: office.description
+        },
+        departments: office.departments.map(dept => ({
+          id: dept.id,
+          name: dept.name,
+          jobPositionCount: dept._count.jobPositions || 0,
+          userCount: userCount // This is not accurate per department, but office-level
+        })),
+        stats
+      };
+    });
+
+    return {
+      weekNumber,
+      year,
+      groupBy: 'office' as const,
+      offices: officesWithStats,
+      summary: this.calculateOfficeSummaryStats(officesWithStats.map(o => o.stats))
+    };
+  }
+
+  /**
+   * Get position details
+   */
+  async getPositionDetails(userId: string, userRole: Role, positionId: string, filters: HierarchyFilters = {}) {
+    const { weekNumber, year } = this.getWeekFilters(filters);
+
+    const position = await this.prisma.position.findUnique({
+      where: { id: positionId },
+      include: {
+        jobPositions: {
+          include: {
+            users: {
+              include: {
+                office: true,
+                jobPosition: {
+                  include: {
+                    department: true
+                  }
+                },
+                reports: {
+                  where: { weekNumber, year },
+                  include: {
+                    tasks: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!position) {
+      throw new NotFoundException('Position not found');
+    }
+
+    // Flatten users from all job positions
+    const users = position.jobPositions.flatMap(jp => jp.users);
+    const mappedUsers = users.map(this.mapUserToPositionUser.bind(this));
+
+    return {
+      position: {
+        id: position.id,
+        name: position.name,
+        description: position.description
+      },
+      weekNumber,
+      year,
+      groupBy: 'user' as const,
+      users: mappedUsers,
+      summary: {
+        totalUsers: users.length,
+        usersWithReports: users.filter(u => u.reports && u.reports.length > 0).length,
+        usersWithCompletedReports: users.filter(u => 
+          u.reports && u.reports.length > 0 && u.reports[0].tasks &&
+          u.reports[0].tasks.every((task: any) => task.isCompleted)
+        ).length,
+        averageTaskCompletion: this.calculateAverageTaskCompletion(users)
+      }
+    };
+  }
+
+  /**
+   * Get position users list
+   */
+  async getPositionUsers(userId: string, userRole: Role, positionId: string, filters: HierarchyFilters = {}) {
+    const { weekNumber, year } = this.getWeekFilters(filters);
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        jobPosition: {
+          positionId: positionId
+        },
+        isActive: true
+      },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: true
+          }
+        },
+        reports: {
+          where: { weekNumber, year },
+          include: {
+            tasks: true
+          }
+        }
+      }
+    });
+
+    return {
+      positionId,
+      weekNumber,
+      year,
+      users: users.map(this.mapUserToPositionUser.bind(this)),
+      summary: {
+        totalUsers: users.length,
+        usersWithReports: users.filter(u => u.reports && u.reports.length > 0).length
+      }
+    };
+  }
+
+  /**
+   * Get user details
+   */
+  async getUserDetails(userId: string, userRole: Role, targetUserId: string, filters: HierarchyFilters = {}) {
+    const { weekNumber, year, limit } = filters;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: {
+              include: {
+                office: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Get user reports
+    const reportsWhere: any = { userId: targetUserId };
     if (weekNumber && year) {
       reportsWhere.weekNumber = weekNumber;
       reportsWhere.year = year;
@@ -617,86 +1019,21 @@ export class HierarchyReportsService {
     const reports = await this.prisma.report.findMany({
       where: reportsWhere,
       include: {
-        tasks: {
-          select: {
-            id: true,
-            taskName: true,
-            isCompleted: true,
-            reasonNotDone: true,
-            monday: true,
-            tuesday: true,
-            wednesday: true,
-            thursday: true,
-            friday: true,
-            saturday: true,
-            sunday: true,
-          },
-        },
+        tasks: true
       },
-      orderBy: [{ year: 'desc' }, { weekNumber: 'desc' }],
-      take: limit,
+      orderBy: [
+        { year: 'desc' },
+        { weekNumber: 'desc' }
+      ],
+      take: limit || 10
     });
 
-    // Analyze reports
-    const reportsAnalysis = reports.map((report) => {
-      const totalTasks = report.tasks.length;
-      const completedTasks = report.tasks.filter((task) => task.isCompleted).length;
-      const incompleteTasks = report.tasks.filter((task) => !task.isCompleted);
-
-      const tasksByDay = {
-        monday: report.tasks.filter((task) => task.monday).length,
-        tuesday: report.tasks.filter((task) => task.tuesday).length,
-        wednesday: report.tasks.filter((task) => task.wednesday).length,
-        thursday: report.tasks.filter((task) => task.thursday).length,
-        friday: report.tasks.filter((task) => task.friday).length,
-        saturday: report.tasks.filter((task) => task.saturday).length,
-        sunday: report.tasks.filter((task) => task.sunday).length,
-      };
-
-      const incompleteReasonsMap = new Map<string, { count: number; tasks: string[] }>();
-      incompleteTasks.forEach((task) => {
-        const reason = task.reasonNotDone?.trim() || 'Không có lý do';
-        if (!incompleteReasonsMap.has(reason)) {
-          incompleteReasonsMap.set(reason, { count: 0, tasks: [] });
-        }
-        const reasonData = incompleteReasonsMap.get(reason)!;
-        reasonData.count += 1;
-        reasonData.tasks.push(task.taskName);
-      });
-
-      const incompleteReasons = Array.from(incompleteReasonsMap.entries())
-        .map(([reason, data]) => ({ reason, count: data.count, tasks: data.tasks }))
-        .sort((a, b) => b.count - a.count);
-
-      return {
-        id: report.id,
-        weekNumber: report.weekNumber,
-        year: report.year,
-        isCompleted: report.isCompleted,
-        isLocked: report.isLocked,
-        createdAt: report.createdAt,
-        updatedAt: report.updatedAt,
-        stats: {
-          totalTasks,
-          completedTasks,
-          incompleteTasks: incompleteTasks.length,
-          // Fixed percentage calculation
-          taskCompletionRate: this.calculatePercentage(completedTasks, totalTasks),
-          tasksByDay,
-          incompleteReasons,
-        },
-        tasks: report.tasks,
-      };
-    });
-
-    // Overall user statistics
+    // Calculate overall stats
     const totalReports = reports.length;
-    const completedReports = reports.filter((r) => r.isCompleted).length;
+    const completedReports = reports.filter(r => r.isCompleted).length;
     const totalTasks = reports.reduce((sum, r) => sum + r.tasks.length, 0);
-    const completedTasks = reports.reduce(
-      (sum, r) => sum + r.tasks.filter((t) => t.isCompleted).length,
-      0,
-    );
+    const completedTasks = reports.reduce((sum, r) => 
+      sum + r.tasks.filter((t: any) => t.isCompleted).length, 0);
 
     return {
       user: {
@@ -707,507 +1044,59 @@ export class HierarchyReportsService {
         email: user.email,
         role: user.role,
         isActive: user.isActive,
-        office: {
-          id: user.office.id,
-          name: user.office.name,
-          type: user.office.type,
-        },
-        jobPosition: {
-          id: user.jobPosition.id,
-          jobName: user.jobPosition.jobName,
-          positionName: user.jobPosition.position.name,
-          department: {
-            id: user.jobPosition.department.id,
-            name: user.jobPosition.department.name,
-            office: {
-              id: user.jobPosition.department.office.id,
-              name: user.jobPosition.department.office.name,
-            },
-          },
-        },
+        office: user.office,
+        jobPosition: user.jobPosition
       },
       overallStats: {
         totalReports,
         completedReports,
-        // Fixed percentage calculations
-        reportCompletionRate: this.calculatePercentage(completedReports, totalReports),
-        totalTasks,
-        completedTasks,
-        taskCompletionRate: this.calculatePercentage(completedTasks, totalTasks),
-      },
-      reports: reportsAnalysis,
-    };
-  }
-
-  async getMyHierarchyView(
-    currentUser: any,
-    weekNumber?: number,
-    year?: number,
-  ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = weekNumber || currentWeek;
-    const targetYear = year || currentYear;
-
-    try {
-      switch (currentUser.role) {
-        case Role.SUPERADMIN:
-        case Role.ADMIN:
-          return this.getOfficesOverview(currentUser, targetWeek, targetYear);
-
-        case Role.OFFICE_MANAGER: {
-          if (!currentUser.officeId) {
-            throw new ForbiddenException('Office ID not found for office manager');
-          }
-          return this.getOfficeDetails(currentUser.officeId, currentUser, targetWeek, targetYear);
-        }
-
-        case Role.OFFICE_ADMIN: {
-          let departmentId = currentUser.jobPosition?.departmentId;
-          
-          if (!departmentId) {
-            const userWithJobPosition = await this.prisma.user.findUnique({
-              where: { id: currentUser.id },
-              include: { 
-                jobPosition: { 
-                  select: { departmentId: true } 
-                } 
-              },
-            });
-            departmentId = userWithJobPosition?.jobPosition?.departmentId;
-          }
-
-          if (!departmentId) {
-            throw new ForbiddenException('Department ID not found for office admin');
-          }
-
-          return this.getDepartmentDetails(departmentId, currentUser, targetWeek, targetYear);
-        }
-
-        case Role.USER:
-          return this.getUserDetails(currentUser.id, currentUser, targetWeek, targetYear);
-
-        default:
-          throw new ForbiddenException('Invalid user role');
-      }
-    } catch (error) {
-      this.logger.error('Error in getMyHierarchyView:', error);
-      throw error;
-    }
-  }
-
-  async getTaskCompletionTrends(
-    currentUser: any,
-    filters: {
-      officeId?: string;
-      departmentId?: string;
-      weeks: number;
-    },
-  ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    
-    // Generate week ranges
-    const weekRanges = [];
-    for (let i = 0; i < filters.weeks; i++) {
-      let week = currentWeek - i;
-      let year = currentYear;
-      
-      if (week <= 0) {
-        week = 52 + week; // Handle year transition
-        year = currentYear - 1;
-      }
-      
-      weekRanges.push({ weekNumber: week, year });
-    }
-
-    // Build where clause based on filters and permissions
-    const whereClause: any = {
-      OR: weekRanges.map(({ weekNumber, year }) => ({ weekNumber, year })),
-    };
-
-    // Apply role-based filtering with proper department ID access
-    if (currentUser.role === Role.OFFICE_MANAGER) {
-      whereClause.user = { officeId: currentUser.officeId };
-    } else if (currentUser.role === Role.OFFICE_ADMIN) {
-      const departmentId = currentUser.jobPosition?.departmentId || 
-        (await this.getUserDepartmentId(currentUser.id));
-      
-      if (departmentId) {
-        whereClause.user = {
-          jobPosition: { departmentId },
-        };
-      }
-    } else if (filters.officeId && [Role.ADMIN, Role.SUPERADMIN].includes(currentUser.role)) {
-      whereClause.user = { officeId: filters.officeId };
-    } else if (filters.departmentId && [Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER].includes(currentUser.role)) {
-      whereClause.user = { jobPosition: { departmentId: filters.departmentId } };
-    }
-
-    const reports = await this.prisma.report.findMany({
-      where: whereClause,
-      include: {
-        tasks: {
-          select: {
-            isCompleted: true,
-          },
-        },
-      },
-    });
-
-    // Group by week and calculate stats
-    const weeklyStats = weekRanges.map(({ weekNumber, year }) => {
-      const weekReports = reports.filter(
-        (r) => r.weekNumber === weekNumber && r.year === year,
-      );
-
-      const totalTasks = weekReports.reduce((sum, r) => sum + r.tasks.length, 0);
-      const completedTasks = weekReports.reduce(
-        (sum, r) => sum + r.tasks.filter((t) => t.isCompleted).length,
-        0,
-      );
-
-      return {
-        weekNumber,
-        year,
-        totalReports: weekReports.length,
-        completedReports: weekReports.filter((r) => r.isCompleted).length,
-        totalTasks,
-        completedTasks,
-        // Fixed percentage calculations
-        taskCompletionRate: this.calculatePercentage(completedTasks, totalTasks),
-        reportCompletionRate: this.calculatePercentage(
-          weekReports.filter((r) => r.isCompleted).length,
-          weekReports.length
-        ),
-      };
-    }).reverse(); // Reverse to show chronological order
-
-    return {
-      filters,
-      trends: weeklyStats,
-      summary: {
-        // Fixed summary calculations - use actual averages
-        averageTaskCompletion: weeklyStats.length > 0
-          ? Math.round(weeklyStats.reduce((sum, week) => sum + week.taskCompletionRate, 0) / weeklyStats.length)
-          : 0,
-        averageReportCompletion: weeklyStats.length > 0
-          ? Math.round(weeklyStats.reduce((sum, week) => sum + week.reportCompletionRate, 0) / weeklyStats.length)
-          : 0,
-      },
-    };
-  }
-
-  async getIncompleteReasonsHierarchy(
-    currentUser: any,
-    filters: {
-      officeId?: string;
-      departmentId?: string;
-      weekNumber?: number;
-      year?: number;
-    },
-  ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = filters.weekNumber || currentWeek;
-    const targetYear = filters.year || currentYear;
-
-    // Build where clause
-    const whereClause: any = {
-      weekNumber: targetWeek,
-      year: targetYear,
-    };
-
-    // Apply role-based and filter-based restrictions with proper department ID access
-    if (currentUser.role === Role.OFFICE_MANAGER) {
-      whereClause.user = { officeId: currentUser.officeId };
-    } else if (currentUser.role === Role.OFFICE_ADMIN) {
-      const departmentId = currentUser.jobPosition?.departmentId || 
-        (await this.getUserDepartmentId(currentUser.id));
-      
-      if (departmentId) {
-        whereClause.user = {
-          jobPosition: { departmentId },
-        };
-      }
-    } else if (filters.officeId && [Role.ADMIN, Role.SUPERADMIN].includes(currentUser.role)) {
-      whereClause.user = { officeId: filters.officeId };
-    } else if (filters.departmentId && [Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER].includes(currentUser.role)) {
-      whereClause.user = { jobPosition: { departmentId: filters.departmentId } };
-    }
-
-    const reports = await this.prisma.report.findMany({
-      where: whereClause,
-      include: {
-        tasks: {
-          where: { isCompleted: false },
-          select: {
-            taskName: true,
-            reasonNotDone: true,
-          },
-        },
-        user: {
-          select: {
-            employeeCode: true,
-            firstName: true,
-            lastName: true,
-            jobPosition: {
-              select: {
-                jobName: true,
-                department: {
-                  select: {
-                    name: true,
-                    office: {
-                      select: {
-                        name: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Analyze incomplete reasons
-    const reasonsMap = new Map<string, {
-      count: number;
-      users: Set<string>;
-      tasks: Array<{
-        taskName: string;
-        userName: string;
-        department: string;
-        office: string;
-      }>;
-    }>();
-
-    reports.forEach((report) => {
-      report.tasks.forEach((task) => {
-        const reason = task.reasonNotDone?.trim() || 'Không có lý do';
-        const userName = `${report.user.firstName} ${report.user.lastName}`;
-        const department = report.user.jobPosition?.department?.name || 'N/A';
-        const office = report.user.jobPosition?.department?.office?.name || 'N/A';
-
-        if (!reasonsMap.has(reason)) {
-          reasonsMap.set(reason, {
-            count: 0,
-            users: new Set(),
-            tasks: [],
-          });
-        }
-
-        const reasonData = reasonsMap.get(reason)!;
-        reasonData.count += 1;
-        reasonData.users.add(report.user.employeeCode);
-        
-        if (reasonData.tasks.length < 10) { // Limit sample tasks
-          reasonData.tasks.push({
-            taskName: task.taskName,
-            userName,
-            department,
-            office,
-          });
-        }
-      });
-    });
-
-    const totalIncompleteTasks = Array.from(reasonsMap.values())
-      .reduce((sum, data) => sum + data.count, 0);
-
-    const reasonsAnalysis = Array.from(reasonsMap.entries())
-      .map(([reason, data]) => ({
-        reason,
-        count: data.count,
-        affectedUsers: data.users.size,
-        // Fixed percentage calculation
-        percentage: this.calculatePercentage(data.count, totalIncompleteTasks),
-        sampleTasks: data.tasks,
-      }))
-      .sort((a, b) => b.count - a.count);
-
-    return {
-      weekNumber: targetWeek,
-      year: targetYear,
-      filters,
-      totalIncompleteTasks,
-      totalReports: reports.length,
-      reasonsAnalysis,
-      summary: {
-        topReason: reasonsAnalysis[0]?.reason || 'N/A',
-        mostAffectedUsers: reasonsAnalysis[0]?.affectedUsers || 0,
-        diversityIndex: reasonsMap.size, // Number of different reasons
-      },
-    };
-  }
-
-  async getUserReportsForAdmin(
-    userId: string,
-    currentUser: any,
-    filters: {
-      page: number;
-      limit: number;
-      weekNumber?: number;
-      year?: number;
-    },
-  ) {
-    // Check access permissions
-    if (!await this.canAccessUser(currentUser, userId)) {
-      throw new ForbiddenException('Access denied to this user');
-    }
-
-    const { page, limit, weekNumber, year } = filters;
-    const skip = (page - 1) * limit;
-
-    // Build where clause
-    const whereClause: any = { userId };
-    if (weekNumber && year) {
-      whereClause.weekNumber = weekNumber;
-      whereClause.year = year;
-    }
-
-    // Get user info
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        office: true,
-        jobPosition: {
-          include: {
-            position: true,
-            department: {
-              include: {
-                office: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    // Get reports with pagination
-    const [reports, total] = await Promise.all([
-      this.prisma.report.findMany({
-        where: whereClause,
-        include: {
-          tasks: {
-            select: {
-              id: true,
-              taskName: true,
-              isCompleted: true,
-              reasonNotDone: true,
-              monday: true,
-              tuesday: true,
-              wednesday: true,
-              thursday: true,
-              friday: true,
-              saturday: true,
-              sunday: true,
-            },
-          },
-        },
-        orderBy: [{ year: 'desc' }, { weekNumber: 'desc' }],
-        skip,
-        take: limit,
-      }),
-      this.prisma.report.count({ where: whereClause }),
-    ]);
-
-    // Process reports to add statistics
-    const processedReports = reports.map((report) => {
-      const totalTasks = report.tasks.length;
-      const completedTasks = report.tasks.filter((task) => task.isCompleted).length;
-      const incompleteTasks = report.tasks.filter((task) => !task.isCompleted);
-
-      // Get incomplete reasons for this report
-      const incompleteReasons = new Map<string, number>();
-      incompleteTasks.forEach((task) => {
-        const reason = task.reasonNotDone?.trim() || 'Không có lý do';
-        incompleteReasons.set(reason, (incompleteReasons.get(reason) || 0) + 1);
-      });
-
-      const topIncompleteReasons = Array.from(incompleteReasons.entries())
-        .map(([reason, count]) => ({ reason, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 3);
-
-      return {
-        id: report.id,
-        weekNumber: report.weekNumber,
-        year: report.year,
-        isCompleted: report.isCompleted,
-        isLocked: report.isLocked,
-        createdAt: report.createdAt,
-        updatedAt: report.updatedAt,
-        totalTasks,
-        completedTasks,
-        incompleteTasks: incompleteTasks.length,
-        taskCompletionRate: this.calculatePercentage(completedTasks, totalTasks),
-        incompleteReasons: topIncompleteReasons,
-      };
-    });
-
-    // Calculate summary statistics
-    const totalReports = await this.prisma.report.count({ where: { userId } });
-    const completedReports = await this.prisma.report.count({
-      where: { userId, isCompleted: true },
-    });
-    const totalTasks = await this.prisma.reportTask.count({
-      where: {
-        report: { userId },
-      },
-    });
-    const completedTasksTotal = await this.prisma.reportTask.count({
-      where: {
-        report: { userId },
-        isCompleted: true,
-      },
-    });
-
-    return {
-      user: {
-        id: user.id,
-        employeeCode: user.employeeCode,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role,
-        isActive: user.isActive,
-        office: user.office,
-        jobPosition: user.jobPosition,
-      },
-      reports: processedReports,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-      summary: {
-        totalReports,
-        completedReports,
         reportCompletionRate: totalReports > 0 ? Math.round((completedReports / totalReports) * 100) : 0,
         totalTasks,
-        completedTasks: completedTasksTotal,
-        taskCompletionRate: totalTasks > 0 ? Math.round((completedTasksTotal / totalTasks) * 100) : 0,
+        completedTasks,
+        taskCompletionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
       },
+      reports: reports.map(report => ({
+        id: report.id,
+        weekNumber: report.weekNumber,
+        year: report.year,
+        isCompleted: report.isCompleted,
+        isLocked: report.isLocked,
+        createdAt: report.createdAt.toISOString(),
+        updatedAt: report.updatedAt.toISOString(),
+        stats: {
+          totalTasks: report.tasks.length,
+          completedTasks: report.tasks.filter((t: any) => t.isCompleted).length,
+          incompleteTasks: report.tasks.filter((t: any) => !t.isCompleted).length,
+          taskCompletionRate: report.tasks.length > 0 
+            ? Math.round((report.tasks.filter((t: any) => t.isCompleted).length / report.tasks.length) * 100)
+            : 0,
+          tasksByDay: this.calculateTasksByDay(report.tasks),
+          incompleteReasons: this.calculateIncompleteReasons(report.tasks)
+        },
+        tasks: report.tasks
+      }))
     };
   }
 
-  async getReportDetailsForAdmin(
-    userId: string,
-    reportId: string,
-    currentUser: any,
-  ) {
-    // Check access permissions
-    if (!await this.canAccessUser(currentUser, userId)) {
-      throw new ForbiddenException('Access denied to this user');
-    }
+  /**
+   * Get employees without reports
+   */
+  async getEmployeesWithoutReports(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
+    const { weekNumber, year, page = 1, limit = 10 } = filters;
+    const { weekNumber: currentWeek, year: currentYear } = this.getWeekFilters(filters);
 
-    // Get user info
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+    const whereClause = await this.buildUserWhereClause(userId, userRole, filters);
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        ...whereClause,
+        reports: {
+          none: {
+            weekNumber: currentWeek,
+            year: currentYear
+          }
+        }
+      },
       include: {
         office: true,
         jobPosition: {
@@ -1215,859 +1104,660 @@ export class HierarchyReportsService {
             position: true,
             department: {
               include: {
-                office: true,
-              },
-            },
-          },
-        },
+                office: true
+              }
+            }
+          }
+        }
       },
+      skip: (page - 1) * limit,
+      take: limit
     });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    // Get specific report
-    const report = await this.prisma.report.findFirst({
+    const total = await this.prisma.user.count({
       where: {
-        id: reportId,
-        userId,
-      },
-      include: {
-        tasks: {
-          select: {
-            id: true,
-            taskName: true,
-            isCompleted: true,
-            reasonNotDone: true,
-            monday: true,
-            tuesday: true,
-            wednesday: true,
-            thursday: true,
-            friday: true,
-            saturday: true,
-            sunday: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-          orderBy: {
-            createdAt: 'asc',
-          },
-        },
-      },
-    });
-
-    if (!report) {
-      throw new NotFoundException('Report not found');
-    }
-
-    // Calculate statistics
-    const totalTasks = report.tasks.length;
-    const completedTasks = report.tasks.filter((task) => task.isCompleted).length;
-    const incompleteTasks = report.tasks.filter((task) => !task.isCompleted);
-
-    // Work days analysis
-    const workDaysCount = Math.max(
-      ...report.tasks.map((task) => {
-        const days = [
-          task.monday, task.tuesday, task.wednesday, task.thursday,
-          task.friday, task.saturday, task.sunday
-        ].filter(Boolean).length;
-        return days;
-      }),
-      0
-    );
-
-    // Tasks by day statistics
-    const tasksByDay = {
-      monday: report.tasks.filter((task) => task.monday).length,
-      tuesday: report.tasks.filter((task) => task.tuesday).length,
-      wednesday: report.tasks.filter((task) => task.wednesday).length,
-      thursday: report.tasks.filter((task) => task.thursday).length,
-      friday: report.tasks.filter((task) => task.friday).length,
-      saturday: report.tasks.filter((task) => task.saturday).length,
-      sunday: report.tasks.filter((task) => task.sunday).length,
-    };
-
-    // Incomplete reasons analysis
-    const incompleteReasonsMap = new Map<string, { count: number; tasks: string[] }>();
-    incompleteTasks.forEach((task) => {
-      const reason = task.reasonNotDone?.trim() || 'Không có lý do';
-      if (!incompleteReasonsMap.has(reason)) {
-        incompleteReasonsMap.set(reason, { count: 0, tasks: [] });
-      }
-      const reasonData = incompleteReasonsMap.get(reason)!;
-      reasonData.count += 1;
-      reasonData.tasks.push(task.taskName);
-    });
-
-    const incompleteReasons = Array.from(incompleteReasonsMap.entries())
-      .map(([reason, data]) => ({
-        reason,
-        count: data.count,
-        tasks: data.tasks,
-      }))
-      .sort((a, b) => b.count - a.count);
-
-    return {
-      user: {
-        id: user.id,
-        employeeCode: user.employeeCode,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role,
-        office: user.office,
-        jobPosition: user.jobPosition,
-      },
-      report: {
-        id: report.id,
-        weekNumber: report.weekNumber,
-        year: report.year,
-        isCompleted: report.isCompleted,
-        isLocked: report.isLocked,
-        createdAt: report.createdAt,
-        updatedAt: report.updatedAt,
-        tasks: report.tasks,
-      },
-      stats: {
-        totalTasks,
-        completedTasks,
-        incompleteTasks: incompleteTasks.length,
-        taskCompletionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-        workDaysCount,
-        tasksByDay,
-        incompleteReasons,
-      },
-    };
-  }
-
-  async getEmployeesWithoutReports(
-    currentUser: any,
-    filters: {
-      weekNumber?: number;
-      year?: number;
-      officeId?: string;
-      departmentId?: string;
-      page?: number;
-      limit?: number;
-    },
-  ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = filters.weekNumber || currentWeek;
-    const targetYear = filters.year || currentYear;
-    const page = filters.page || 1;
-    const limit = filters.limit || 20;
-    const skip = (page - 1) * limit;
-
-    // Build where clause based on user role and filters
-    const userWhereClause: any = {
-      isActive: true,
-    };
-
-    // Apply role-based filtering
-    switch (currentUser.role) {
-      case Role.OFFICE_MANAGER: {
-        userWhereClause.officeId = currentUser.officeId;
-        break;
-      }
-      
-      case Role.OFFICE_ADMIN: {
-        const departmentId = currentUser.jobPosition?.departmentId || 
-          (await this.getUserDepartmentId(currentUser.id));
-        if (departmentId) {
-          userWhereClause.jobPosition = { departmentId };
-        }
-        break;
-      }
-      
-      case Role.ADMIN:
-      case Role.SUPERADMIN: {
-        if (filters.officeId) {
-          userWhereClause.officeId = filters.officeId;
-        }
-        if (filters.departmentId) {
-          userWhereClause.jobPosition = { departmentId: filters.departmentId };
-        }
-        break;
-      }
-      
-      default:
-        throw new ForbiddenException('Insufficient permissions');
-    }
-
-    // Get all users that match the criteria
-    const allUsers = await this.prisma.user.findMany({
-      where: userWhereClause,
-      include: {
-        office: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-          },
-        },
-        jobPosition: {
-          include: {
-            position: {
-              select: {
-                name: true,
-              },
-            },
-            department: {
-              include: {
-                office: {
-                  select: {
-                    name: true,
-                  },
-                },
-              },
-            },
-          },
-        },
+        ...whereClause,
         reports: {
-          where: {
-            weekNumber: targetWeek,
-            year: targetYear,
-          },
-          select: {
-            id: true,
-            isCompleted: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
-
-    // Filter users who haven't submitted reports for the target week
-    const usersWithoutReports = allUsers.filter(user => user.reports.length === 0);
-
-    // Apply pagination
-    const totalUsers = usersWithoutReports.length;
-    const paginatedUsers = usersWithoutReports.slice(skip, skip + limit);
-
-    // Format the response
-    const employeesWithoutReports = paginatedUsers.map(user => ({
-      id: user.id,
-      employeeCode: user.employeeCode,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      fullName: `${user.firstName} ${user.lastName}`,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-      office: {
-        id: user.office.id,
-        name: user.office.name,
-        type: user.office.type,
-      },
-      jobPosition: {
-        id: user.jobPosition.id,
-        jobName: user.jobPosition.jobName,
-        positionName: user.jobPosition.position.name,
-        department: {
-          id: user.jobPosition.department.id,
-          name: user.jobPosition.department.name,
-          office: {
-            name: user.jobPosition.department.office.name,
-          },
-        },
-      },
-      lastReportDate: null, // No report for this week
-      daysOverdue: this.calculateDaysOverdue(targetWeek, targetYear),
-    }));
-
-    // Get statistics
-    const totalActiveUsers = allUsers.length;
-    const usersWithReports = allUsers.filter(user => user.reports.length > 0).length;
-    const submissionRate = totalActiveUsers > 0 
-      ? Math.round((usersWithReports / totalActiveUsers) * 100) 
-      : 0;
-
-    // Group by department for summary
-    const departmentSummary = new Map<string, {
-      departmentName: string;
-      officeName: string;
-      totalUsers: number;
-      usersWithoutReports: number;
-    }>();
-
-    usersWithoutReports.forEach(user => {
-      const deptKey = user.jobPosition.department.id;
-      if (!departmentSummary.has(deptKey)) {
-        departmentSummary.set(deptKey, {
-          departmentName: user.jobPosition.department.name,
-          officeName: user.jobPosition.department.office.name,
-          totalUsers: 0,
-          usersWithoutReports: 0,
-        });
-      }
-      departmentSummary.get(deptKey)!.usersWithoutReports += 1;
-    });
-
-    // Add total users count for each department
-    allUsers.forEach(user => {
-      const deptKey = user.jobPosition.department.id;
-      if (departmentSummary.has(deptKey)) {
-        departmentSummary.get(deptKey)!.totalUsers += 1;
-      }
-    });
-
-    const departmentBreakdown = Array.from(departmentSummary.entries()).map(([deptId, data]) => ({
-      departmentId: deptId,
-      departmentName: data.departmentName,
-      officeName: data.officeName,
-      totalUsers: data.totalUsers,
-      usersWithoutReports: data.usersWithoutReports,
-      missingRate: Math.round((data.usersWithoutReports / data.totalUsers) * 100),
-    }));
-
-    return {
-      weekNumber: targetWeek,
-      year: targetYear,
-      employees: employeesWithoutReports,
-      pagination: {
-        page,
-        limit,
-        total: totalUsers,
-        totalPages: Math.ceil(totalUsers / limit),
-      },
-      summary: {
-        totalActiveUsers,
-        usersWithReports,
-        usersWithoutReports: totalUsers,
-        submissionRate,
-        missingRate: 100 - submissionRate,
-      },
-      departmentBreakdown,
-    };
-  }
-
-  async getEmployeesWithIncompleteReports(
-    currentUser: any,
-    filters: {
-      weekNumber?: number;
-      year?: number;
-      officeId?: string;
-      departmentId?: string;
-      page?: number;
-      limit?: number;
-    },
-  ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = filters.weekNumber || currentWeek;
-    const targetYear = filters.year || currentYear;
-    const page = filters.page || 1;
-    const limit = filters.limit || 20;
-    const skip = (page - 1) * limit;
-
-    // Build where clause for reports
-    const reportWhereClause: any = {
-      weekNumber: targetWeek,
-      year: targetYear,
-      isCompleted: false, // Only incomplete reports
-    };
-
-    // Apply role-based filtering
-    switch (currentUser.role) {
-      case Role.OFFICE_MANAGER: {
-        reportWhereClause.user = { officeId: currentUser.officeId };
-        break;
-      }
-      
-      case Role.OFFICE_ADMIN: {
-        const departmentId = currentUser.jobPosition?.departmentId || 
-          (await this.getUserDepartmentId(currentUser.id));
-        if (departmentId) {
-          reportWhereClause.user = { jobPosition: { departmentId } };
+          none: {
+            weekNumber: currentWeek,
+            year: currentYear
+          }
         }
-        break;
       }
-      
-      case Role.ADMIN:
-      case Role.SUPERADMIN: {
-        if (filters.officeId) {
-          reportWhereClause.user = { officeId: filters.officeId };
-        }
-        if (filters.departmentId) {
-          reportWhereClause.user = { jobPosition: { departmentId: filters.departmentId } };
-        }
-        break;
-      }
-      
-      default:
-        throw new ForbiddenException('Insufficient permissions');
-    }
-
-    // Get total count
-    const totalCount = await this.prisma.report.count({
-      where: reportWhereClause,
-    });
-
-    // Get reports with user details
-    const incompleteReports = await this.prisma.report.findMany({
-      where: reportWhereClause,
-      include: {
-        user: {
-          include: {
-            office: {
-              select: {
-                id: true,
-                name: true,
-                type: true,
-              },
-            },
-            jobPosition: {
-              include: {
-                position: {
-                  select: {
-                    name: true,
-                  },
-                },
-                department: {
-                  include: {
-                    office: {
-                      select: {
-                        name: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        tasks: {
-          select: {
-            taskName: true,
-            isCompleted: true,
-            reasonNotDone: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-      skip,
-      take: limit,
-    });
-
-    // Format the response
-    const employeesWithIncompleteReports = incompleteReports.map(report => {
-      const totalTasks = report.tasks.length;
-      const completedTasks = report.tasks.filter(task => task.isCompleted).length;
-      const incompleteTasks = report.tasks.filter(task => !task.isCompleted);
-
-      // Analyze incomplete reasons
-      const reasonsMap = new Map<string, number>();
-      incompleteTasks.forEach(task => {
-        const reason = task.reasonNotDone?.trim() || 'Không có lý do';
-        reasonsMap.set(reason, (reasonsMap.get(reason) || 0) + 1);
-      });
-
-      const topReasons = Array.from(reasonsMap.entries())
-        .map(([reason, count]) => ({ reason, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 3);
-
-      return {
-        reportId: report.id,
-        employee: {
-          id: report.user.id,
-          employeeCode: report.user.employeeCode,
-          firstName: report.user.firstName,
-          lastName: report.user.lastName,
-          fullName: `${report.user.firstName} ${report.user.lastName}`,
-          email: report.user.email,
-          phone: report.user.phone,
-          role: report.user.role,
-          office: report.user.office,
-          jobPosition: {
-            id: report.user.jobPosition.id,
-            jobName: report.user.jobPosition.jobName,
-            positionName: report.user.jobPosition.position.name,
-            department: {
-              id: report.user.jobPosition.department.id,
-              name: report.user.jobPosition.department.name,
-              office: {
-                name: report.user.jobPosition.department.office.name,
-              },
-            },
-          },
-        },
-        reportDetails: {
-          createdAt: report.createdAt,
-          updatedAt: report.updatedAt,
-          isLocked: report.isLocked,
-          totalTasks,
-          completedTasks,
-          incompleteTasks: incompleteTasks.length,
-          completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-          topIncompleteReasons: topReasons,
-        },
-        daysOverdue: this.calculateDaysOverdue(targetWeek, targetYear),
-      };
     });
 
     return {
-      weekNumber: targetWeek,
-      year: targetYear,
-      employees: employeesWithIncompleteReports,
-      pagination: {
-        page,
-        limit,
-        total: totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-      },
-      summary: {
-        totalIncompleteReports: totalCount,
-      },
-    };
-  }
-
-  async getEmployeesReportingStatus(
-    currentUser: any,
-    filters: {
-      weekNumber?: number;
-      year?: number;
-      officeId?: string;
-      departmentId?: string;
-      status?: 'not_submitted' | 'incomplete' | 'completed' | 'all';
-      page?: number;
-      limit?: number;
-    },
-  ) {
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const targetWeek = filters.weekNumber || currentWeek;
-    const targetYear = filters.year || currentYear;
-    const page = filters.page || 1;
-    const limit = filters.limit || 20;
-    const skip = (page - 1) * limit;
-
-    // Build user where clause based on role and filters
-    const userWhereClause: any = {
-      isActive: true,
-    };
-
-    // Apply role-based filtering
-    switch (currentUser.role) {
-      case Role.OFFICE_MANAGER: {
-        userWhereClause.officeId = currentUser.officeId;
-        break;
-      }
-      
-      case Role.OFFICE_ADMIN: {
-        const departmentId = currentUser.jobPosition?.departmentId || 
-          (await this.getUserDepartmentId(currentUser.id));
-        if (departmentId) {
-          userWhereClause.jobPosition = { departmentId };
-        }
-        break;
-      }
-      
-      case Role.ADMIN:
-      case Role.SUPERADMIN: {
-        if (filters.officeId) {
-          userWhereClause.officeId = filters.officeId;
-        }
-        if (filters.departmentId) {
-          userWhereClause.jobPosition = { departmentId: filters.departmentId };
-        }
-        break;
-      }
-      
-      default:
-        throw new ForbiddenException('Insufficient permissions');
-    }
-
-    // Get all users
-    const allUsers = await this.prisma.user.findMany({
-      where: userWhereClause,
-      include: {
-        office: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-          },
-        },
-        jobPosition: {
-          include: {
-            position: {
-              select: {
-                name: true,
-              },
-            },
-            department: {
-              include: {
-                office: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        reports: {
-          where: {
-            weekNumber: targetWeek,
-            year: targetYear,
-          },
-          include: {
-            tasks: {
-              select: {
-                isCompleted: true,
-                reasonNotDone: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Categorize users by status
-    const categorizedUsers = allUsers.map(user => {
-      const report = user.reports[0];
-      let status: 'not_submitted' | 'incomplete' | 'completed';
-      let reportDetails = null;
-
-      if (!report) {
-        status = 'not_submitted';
-      } else if (report.isCompleted) {
-        status = 'completed';
-        reportDetails = {
-          reportId: report.id,
-          createdAt: report.createdAt,
-          updatedAt: report.updatedAt,
-          totalTasks: report.tasks.length,
-          completedTasks: report.tasks.filter(task => task.isCompleted).length,
-        };
-      } else {
-        status = 'incomplete';
-        const totalTasks = report.tasks.length;
-        const completedTasks = report.tasks.filter(task => task.isCompleted).length;
-        
-        reportDetails = {
-          reportId: report.id,
-          createdAt: report.createdAt,
-          updatedAt: report.updatedAt,
-          totalTasks,
-          completedTasks,
-          incompleteTasks: totalTasks - completedTasks,
-          completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-        };
-      }
-
-      return {
+      weekNumber: currentWeek,
+      year: currentYear,
+      employees: users.map(user => ({
         id: user.id,
         employeeCode: user.employeeCode,
         firstName: user.firstName,
         lastName: user.lastName,
         fullName: `${user.firstName} ${user.lastName}`,
         email: user.email,
-        phone: user.phone,
         role: user.role,
         office: user.office,
-        jobPosition: {
-          id: user.jobPosition.id,
-          jobName: user.jobPosition.jobName,
-          positionName: user.jobPosition.position.name,
-          department: {
-            id: user.jobPosition.department.id,
-            name: user.jobPosition.department.name,
-            office: {
-              id: user.jobPosition.department.office.id,
-              name: user.jobPosition.department.office.name,
-            },
-          },
-        },
-        status,
-        reportDetails,
-        daysOverdue: status === 'not_submitted' 
-          ? this.calculateDaysOverdue(targetWeek, targetYear) 
-          : null,
-      };
-    });
-
-    // Filter by status if specified
-    let filteredUsers = categorizedUsers;
-    if (filters.status && filters.status !== 'all') {
-      filteredUsers = categorizedUsers.filter(user => user.status === filters.status);
-    }
-
-    // Apply pagination
-    const totalUsers = filteredUsers.length;
-    const paginatedUsers = filteredUsers.slice(skip, skip + limit);
-
-    // Calculate summary statistics
-    const notSubmittedCount = categorizedUsers.filter(u => u.status === 'not_submitted').length;
-    const incompleteCount = categorizedUsers.filter(u => u.status === 'incomplete').length;
-    const completedCount = categorizedUsers.filter(u => u.status === 'completed').length;
-
-    return {
-      weekNumber: targetWeek,
-      year: targetYear,
-      employees: paginatedUsers,
+        jobPosition: user.jobPosition,
+        status: 'not_submitted' as const,
+        lastReportDate: null,
+        daysOverdue: this.calculateDaysOverdue(currentWeek, currentYear)
+      })),
       pagination: {
         page,
         limit,
-        total: totalUsers,
-        totalPages: Math.ceil(totalUsers / limit),
+        total,
+        totalPages: Math.ceil(total / limit)
       },
       summary: {
-        totalEmployees: allUsers.length,
-        notSubmitted: notSubmittedCount,
-        incomplete: incompleteCount,
-        completed: completedCount,
-        submissionRate: Math.round(((incompleteCount + completedCount) / allUsers.length) * 100),
-        completionRate: Math.round((completedCount / allUsers.length) * 100),
-      },
-      filters: {
-        ...filters,
-        weekNumber: targetWeek,
-        year: targetYear,
-      },
+        totalActiveUsers: total,
+        usersWithReports: 0,
+        usersWithoutReports: total
+      }
     };
   }
 
-  // Helper methods for access control and sorting remain the same
-  private canAccessOffice(user: any, officeId: string): boolean {
-    switch (user.role) {
-      case Role.SUPERADMIN:
-      case Role.ADMIN:
-        return true;
-      case Role.OFFICE_MANAGER:
-        return user.officeId === officeId;
-      default:
-        return false;
-    }
-  }
+  /**
+   * Get employees with incomplete reports
+   */
+  async getEmployeesWithIncompleteReports(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
+    const { weekNumber, year, page = 1, limit = 10 } = filters;
+    const { weekNumber: currentWeek, year: currentYear } = this.getWeekFilters(filters);
 
-  private async canAccessDepartment(user: any, departmentId: string): Promise<boolean> {
-    try {
-      switch (user.role) {
-        case Role.SUPERADMIN:
-        case Role.ADMIN:
-          return true;
-        
-        case Role.OFFICE_MANAGER: {
-          const department = await this.prisma.department.findUnique({
-            where: { id: departmentId },
-            select: { officeId: true },
-          });
-          return department?.officeId === user.officeId;
-        }
-        
-        case Role.OFFICE_ADMIN: {
-          let userDepartmentId = user.jobPosition?.departmentId;
-          
-          if (!userDepartmentId) {
-            userDepartmentId = await this.getUserDepartmentId(user.id);
-          }
-          
-          return userDepartmentId === departmentId;
-        }
-        
-        default:
-          return false;
-      }
-    } catch (error) {
-      this.logger.error('Error in canAccessDepartment:', error);
-      return false;
-    }
-  }
+    const whereClause = await this.buildUserWhereClause(userId, userRole, filters);
 
-  private async canAccessUser(currentUser: any, userId: string): Promise<boolean> {
-    try {
-      switch (currentUser.role) {
-        case Role.SUPERADMIN:
-        case Role.ADMIN:
-          return true;
-        
-        case Role.OFFICE_MANAGER: {
-          const userOffice = await this.prisma.user.findUnique({
-            where: { id: userId },
-            select: { officeId: true },
-          });
-          return userOffice?.officeId === currentUser.officeId;
-        }
-        
-        case Role.OFFICE_ADMIN: {
-          let currentUserDepartmentId = currentUser.jobPosition?.departmentId;
-          
-          if (!currentUserDepartmentId) {
-            currentUserDepartmentId = await this.getUserDepartmentId(currentUser.id);
+    const users = await this.prisma.user.findMany({
+      where: {
+        ...whereClause,
+        reports: {
+          some: {
+            weekNumber: currentWeek,
+            year: currentYear,
+            isCompleted: false
           }
-          
-          if (!currentUserDepartmentId) {
-            return false;
-          }
-          
-          const targetUserDept = await this.prisma.user.findUnique({
-            where: { id: userId },
-            include: { jobPosition: { select: { departmentId: true } } },
-          });
-          
-          return targetUserDept?.jobPosition?.departmentId === currentUserDepartmentId;
         }
-        
-        default:
-          return currentUser.id === userId; // Users can only access themselves
-      }
-    } catch (error) {
-      this.logger.error('Error in canAccessUser:', error);
-      return false;
-    }
-  }
-
-  private async getUserDepartmentId(userId: string): Promise<string | null> {
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        include: { 
-          jobPosition: { 
-            select: { departmentId: true } 
-          } 
+      },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: {
+              include: {
+                office: true
+              }
+            }
+          }
         },
-      });
-      return user?.jobPosition?.departmentId || null;
-    } catch (error) {
-      this.logger.error('Error getting user department ID:', error);
-      return null;
+        reports: {
+          where: {
+            weekNumber: currentWeek,
+            year: currentYear
+          },
+          include: {
+            tasks: true
+          }
+        }
+      },
+      skip: (page - 1) * limit,
+      take: limit
+    });
+
+    const total = await this.prisma.user.count({
+      where: {
+        ...whereClause,
+        reports: {
+          some: {
+            weekNumber: currentWeek,
+            year: currentYear,
+            isCompleted: false
+          }
+        }
+      }
+    });
+
+    return {
+      weekNumber: currentWeek,
+      year: currentYear,
+      employees: users.map(user => {
+        const report = user.reports[0];
+        const totalTasks = report?.tasks.length || 0;
+        const completedTasks = report?.tasks.filter((t: any) => t.isCompleted).length || 0;
+
+        return {
+          id: user.id,
+          employeeCode: user.employeeCode,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          fullName: `${user.firstName} ${user.lastName}`,
+          email: user.email,
+          role: user.role,
+          office: user.office,
+          jobPosition: user.jobPosition,
+          status: 'incomplete' as const,
+          reportDetails: report ? {
+            id: report.id,
+            createdAt: report.createdAt.toISOString(),
+            updatedAt: report.updatedAt.toISOString(),
+            totalTasks,
+            completedTasks,
+            incompleteTasks: totalTasks - completedTasks,
+            completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
+          } : undefined
+        };
+      }),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      },
+      summary: {
+        totalActiveUsers: total,
+        usersWithReports: total,
+        usersWithoutReports: 0
+      }
+    };
+  }
+
+  /**
+   * Get employees reporting status
+   */
+  async getEmployeesReportingStatus(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
+    const { weekNumber, year, page = 1, limit = 10, status } = filters;
+    const { weekNumber: currentWeek, year: currentYear } = this.getWeekFilters(filters);
+
+    const whereClause = await this.buildUserWhereClause(userId, userRole, filters);
+
+    // Build status-specific where clause
+    let statusWhere: any = {};
+    if (status === 'not_submitted') {
+      statusWhere = {
+        reports: {
+          none: {
+            weekNumber: currentWeek,
+            year: currentYear
+          }
+        }
+      };
+    } else if (status === 'incomplete') {
+      statusWhere = {
+        reports: {
+          some: {
+            weekNumber: currentWeek,
+            year: currentYear,
+            isCompleted: false
+          }
+        }
+      };
+    } else if (status === 'completed') {
+      statusWhere = {
+        reports: {
+          some: {
+            weekNumber: currentWeek,
+            year: currentYear,
+            isCompleted: true
+          }
+        }
+      };
     }
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        ...whereClause,
+        ...statusWhere
+      },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: {
+              include: {
+                office: true
+              }
+            }
+          }
+        },
+        reports: {
+          where: {
+            weekNumber: currentWeek,
+            year: currentYear
+          },
+          include: {
+            tasks: true
+          }
+        }
+      },
+      skip: (page - 1) * limit,
+      take: limit
+    });
+
+    const total = await this.prisma.user.count({
+      where: {
+        ...whereClause,
+        ...statusWhere
+      }
+    });
+
+    return {
+      weekNumber: currentWeek,
+      year: currentYear,
+      employees: users.map(user => {
+        const report = user.reports[0];
+        let userStatus: 'not_submitted' | 'incomplete' | 'completed' = 'not_submitted';
+
+        if (report) {
+          userStatus = report.isCompleted ? 'completed' : 'incomplete';
+        }
+
+        return {
+          id: user.id,
+          employeeCode: user.employeeCode,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          fullName: `${user.firstName} ${user.lastName}`,
+          email: user.email,
+          role: user.role,
+          office: user.office,
+          jobPosition: user.jobPosition,
+          status: userStatus,
+          reportDetails: report ? {
+            id: report.id,
+            createdAt: report.createdAt.toISOString(),
+            updatedAt: report.updatedAt.toISOString(),
+            totalTasks: report.tasks.length,
+            completedTasks: report.tasks.filter((t: any) => t.isCompleted).length,
+            completionRate: report.tasks.length > 0 
+              ? Math.round((report.tasks.filter((t: any) => t.isCompleted).length / report.tasks.length) * 100)
+              : 0
+          } : undefined
+        };
+      }),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      },
+      summary: {
+        totalActiveUsers: total,
+        usersWithReports: users.filter(u => u.reports.length > 0).length,
+        usersWithoutReports: users.filter(u => u.reports.length === 0).length
+      }
+    };
+  }
+
+  /**
+   * Get task completion trends
+   */
+  async getTaskCompletionTrends(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
+    const { officeId, departmentId, weeks = 4 } = filters;
+    const current = getCurrentWorkWeek();
+
+    const whereClause = await this.buildUserWhereClause(userId, userRole, { officeId, departmentId });
+
+    // Generate week ranges
+    const weekRanges = [];
+    for (let i = 0; i < weeks; i++) {
+      let weekNumber = current.weekNumber - i;
+      let year = current.year;
+      
+      if (weekNumber <= 0) {
+        weekNumber = 52 + weekNumber;
+        year = current.year - 1;
+      }
+      
+      weekRanges.push({ weekNumber, year });
+    }
+
+    const trends = [];
+    for (const { weekNumber, year } of weekRanges) {
+      const reports = await this.prisma.report.findMany({
+        where: {
+          weekNumber,
+          year,
+          // Fix: Apply user filter correctly
+          user: whereClause
+        },
+        include: {
+          tasks: {
+            select: {
+              isCompleted: true
+            }
+          }
+        }
+      });
+
+      const totalTasks = reports.reduce((sum, report) => sum + report.tasks.length, 0);
+      const completedTasks = reports.reduce((sum, report) => 
+        sum + report.tasks.filter(task => task.isCompleted).length, 0);
+
+      trends.push({
+        weekNumber,
+        year,
+        totalTasks,
+        completedTasks,
+        taskCompletionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
+      });
+    }
+
+    trends.sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      return b.weekNumber - a.weekNumber;
+    });
+
+    const summary = {
+      totalTasks: trends.reduce((sum, t) => sum + t.totalTasks, 0),
+      totalCompletedTasks: trends.reduce((sum, t) => sum + t.completedTasks, 0),
+      averageTaskCompletion: trends.length > 0 
+        ? Math.round(trends.reduce((sum, t) => sum + t.taskCompletionRate, 0) / trends.length)
+        : 0
+    };
+
+    return {
+      filters: { officeId, departmentId, weeks },
+      trends,
+      summary
+    };
+  }
+
+  /**
+   * Get incomplete reasons hierarchy analysis
+   */
+  async getIncompleteReasonsHierarchy(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
+    const { weekNumber, year } = this.getWeekFilters(filters);
+
+    const whereClause = await this.buildUserWhereClause(userId, userRole, filters);
+
+    const reports = await this.prisma.report.findMany({
+      where: {
+        weekNumber,
+        year,
+        // Fix: Apply user filter correctly
+        user: whereClause
+      },
+      include: {
+        tasks: {
+          where: {
+            isCompleted: false,
+            reasonNotDone: {
+              not: null
+            }
+          }
+        },
+        user: {
+          include: {
+            office: true,
+            jobPosition: {
+              include: {
+                department: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const reasonsMap = new Map();
+    let totalIncompleteTasks = 0;
+
+    reports.forEach(report => {
+      report.tasks.forEach(task => {
+        if (!task.isCompleted && task.reasonNotDone) {
+          totalIncompleteTasks++;
+          
+          if (!reasonsMap.has(task.reasonNotDone)) {
+            reasonsMap.set(task.reasonNotDone, {
+              reason: task.reasonNotDone,
+              count: 0,
+              users: new Set(),
+              sampleTasks: []
+            });
+          }
+          
+          const reasonData = reasonsMap.get(task.reasonNotDone);
+          reasonData.count++;
+          reasonData.users.add(report.user.id);
+          
+          if (reasonData.sampleTasks.length < 3) {
+            reasonData.sampleTasks.push({
+              taskName: task.taskName,
+              userName: `${report.user.firstName} ${report.user.lastName}`,
+              department: report.user.jobPosition?.department?.name || '',
+              office: report.user.office?.name || ''
+            });
+          }
+        }
+      });
+    });
+
+    const reasonsAnalysis = Array.from(reasonsMap.values())
+      .map(reason => ({
+        reason: reason.reason,
+        count: reason.count,
+        users: reason.users.size,
+        percentage: totalIncompleteTasks > 0 ? Math.round((reason.count / totalIncompleteTasks) * 100) : 0,
+        sampleTasks: reason.sampleTasks
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      weekNumber,
+      year,
+      totalReports: reports.length,
+      totalIncompleteTasks,
+      reasonsAnalysis,
+      summary: {
+        totalIncompleteTasks,
+        diversityIndex: reasonsAnalysis.length
+      }
+    };
+  }
+
+  // Helper methods
+
+  private async buildUserWhereClause(userId: string, userRole: Role, filters: any = {}) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { 
+        office: true, 
+        jobPosition: { 
+          include: { 
+            department: true,
+            position: true 
+          } 
+        } 
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const whereClause: any = { isActive: true };
+
+    if (userRole === Role.SUPERADMIN || userRole === Role.ADMIN) {
+      // No additional filters for super admin/admin
+    } else if (userRole === Role.USER) {
+      // Check if user has hierarchy viewing permission
+      if (user.jobPosition?.position?.canViewHierarchy === true) {
+        // Management user can see their department
+        whereClause.jobPosition = {
+          departmentId: user.jobPosition.departmentId
+        };
+      } else {
+        // Regular user can only see themselves
+        whereClause.id = userId;
+      }
+    }
+
+    // Apply additional filters
+    if (filters.officeId) {
+      whereClause.officeId = filters.officeId;
+    }
+    if (filters.departmentId) {
+      whereClause.jobPosition = {
+        ...whereClause.jobPosition,
+        departmentId: filters.departmentId
+      };
+    }
+
+    return whereClause;
+  }
+
+  private calculateOfficeStats(users: any[], weekNumber: number, year: number) {
+    const totalUsers = users.length;
+    const usersWithReports = users.filter(u => u.reports && u.reports.length > 0).length;
+    const usersWithoutReports = totalUsers - usersWithReports;
+
+    return {
+      totalUsers,
+      usersWithReports,
+      usersWithoutReports,
+      reportSubmissionRate: totalUsers > 0 ? Math.round((usersWithReports / totalUsers) * 100) : 0
+    };
+  }
+
+  private calculateAverageTaskCompletion(users: any[]): number {
+    let totalTasks = 0;
+    let completedTasks = 0;
+
+    users.forEach(user => {
+      if (user.reports && user.reports.length > 0) {
+        const report = user.reports[0];
+        if (report.tasks) {
+          totalTasks += report.tasks.length;
+          completedTasks += report.tasks.filter((t: any) => t.isCompleted).length;
+        }
+      }
+    });
+
+    return totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  }
+
+  private calculateTasksByDay(tasks: any[]) {
+    return {
+      monday: tasks.filter(t => t.monday).length,
+      tuesday: tasks.filter(t => t.tuesday).length,
+      wednesday: tasks.filter(t => t.wednesday).length,
+      thursday: tasks.filter(t => t.thursday).length,
+      friday: tasks.filter(t => t.friday).length,
+      saturday: tasks.filter(t => t.saturday).length,
+    };
+  }
+
+  private calculateIncompleteReasons(tasks: any[]) {
+    const reasonsMap = new Map();
+    
+    tasks.forEach(task => {
+      if (!task.isCompleted && task.reasonNotDone) {
+        if (!reasonsMap.has(task.reasonNotDone)) {
+          reasonsMap.set(task.reasonNotDone, {
+            reason: task.reasonNotDone,
+            count: 0,
+            tasks: []
+          });
+        }
+        
+        const reasonData = reasonsMap.get(task.reasonNotDone);
+        reasonData.count++;
+        reasonData.tasks.push(task.taskName);
+      }
+    });
+
+    return Array.from(reasonsMap.values())
+      .sort((a, b) => b.count - a.count);
   }
 
   private calculateDaysOverdue(weekNumber: number, year: number): number {
-    return calculateDaysOverdue(weekNumber, year);
+    const now = new Date();
+    const currentWeek = getCurrentWorkWeek();
+    
+    if (year < currentWeek.year || (year === currentWeek.year && weekNumber < currentWeek.weekNumber)) {
+      // Calculate days since the week ended
+      return Math.max(0, Math.floor((now.getTime() - new Date(year, 0, 1 + (weekNumber - 1) * 7).getTime()) / (1000 * 60 * 60 * 24)));
+    }
+    
+    return 0;
   }
 
-  private sortOffices(offices: any[]) {
-    return offices.sort((a, b) => {
-      const getPriority = (officeName: string) => {
-        const name = officeName.toLowerCase().trim();
-        if (name.includes('vpđh') || name.includes('th') || name === 'vpđh th') return 1;
-        if (name.includes('ts1') || name.includes('nhà máy ts1')) return 2;
-        if (name.includes('ts2') || name.includes('nhà máy ts2')) return 3;
-        if (name.includes('ts3') || name.includes('nhà máy ts3')) return 4;
-        return 999;
-      };
-      
-      const priorityA = getPriority(a.name);
-      const priorityB = getPriority(b.name);
-      
-      if (priorityA !== priorityB) {
-        return priorityA - priorityB;
+  // FIX: Remove duplicate calculateSummaryStats methods and keep only one
+  private calculateSummaryStats(users: any[], weekNumber: number, year: number) {
+    const totalUsers = users.length;
+    const usersWithReports = users.filter(u => u.reports && u.reports.length > 0).length;
+    const usersWithoutReports = totalUsers - usersWithReports;
+
+    let totalUsersWithCompletedReports = 0;
+    let totalTasks = 0;
+    let totalCompletedTasks = 0;
+    const allCompletionRates: number[] = [];
+
+    users.forEach(user => {
+      if (user.reports && user.reports.length > 0) {
+        const report = user.reports[0];
+        if (report.tasks) {
+          const userTotalTasks = report.tasks.length;
+          const userCompletedTasks = report.tasks.filter((task: any) => task.isCompleted).length;
+          
+          totalTasks += userTotalTasks;
+          totalCompletedTasks += userCompletedTasks;
+          
+          const userCompletionRate = userTotalTasks > 0 ? (userCompletedTasks / userTotalTasks) * 100 : 0;
+          allCompletionRates.push(userCompletionRate);
+          
+          if (userCompletionRate === 100) {
+            totalUsersWithCompletedReports++;
+          }
+        }
+      } else {
+        allCompletionRates.push(0);
       }
-      
-      return a.name.localeCompare(b.name, 'vi', { numeric: true });
     });
+
+    const averageSubmissionRate = totalUsers > 0 ? Math.round((usersWithReports / totalUsers) * 100) : 0;
+    const averageCompletionRate = totalTasks > 0 ? Math.round((totalCompletedTasks / totalTasks) * 100) : 0;
+
+    const positionSet = new Set();
+    users.forEach(user => {
+      if (user.jobPosition?.position) {
+        positionSet.add(user.jobPosition.position.id);
+      }
+    });
+
+    return {
+      totalPositions: positionSet.size,
+      totalUsers,
+      totalUsersWithReports: usersWithReports,
+      totalUsersWithCompletedReports,
+      totalUsersWithoutReports: usersWithoutReports,
+      averageSubmissionRate,
+      averageCompletionRate,
+      rankingDistribution: this.calculateRankingDistribution(allCompletionRates)
+    };
   }
 
-  private sortDepartments(departments: any[]) {
-    return departments.sort((a, b) => {
-      return a.name.localeCompare(b.name, 'vi', { numeric: true });
-    });
+  // Separate method for office summary stats
+  private calculateOfficeSummaryStats(officeStats: any[]) {
+    const totalUsers = officeStats.reduce((sum, stat) => sum + stat.totalUsers, 0);
+    const totalUsersWithReports = officeStats.reduce((sum, stat) => sum + stat.usersWithReports, 0);
+    const averageSubmissionRate = totalUsers > 0 ? Math.round((totalUsersWithReports / totalUsers) * 100) : 0;
+
+    return {
+      totalPositions: officeStats.length,
+      totalUsers,
+      totalUsersWithReports,
+      totalUsersWithCompletedReports: 0,
+      totalUsersWithoutReports: totalUsers - totalUsersWithReports,
+      averageSubmissionRate,
+      averageCompletionRate: 0,
+      rankingDistribution: {
+        excellent: { count: 0, percentage: 0 },
+        good: { count: 0, percentage: 0 },
+        average: { count: 0, percentage: 0 },
+        poor: { count: 0, percentage: 0 },
+        fail: { count: 0, percentage: 0 }
+      }
+    };
   }
 }

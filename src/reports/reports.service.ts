@@ -7,7 +7,12 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { CreateWeeklyReportDto, UpdateReportDto } from './dto/report.dto';
-import { getCurrentWeek } from '../common/utils/date.utils';
+import { 
+  getCurrentWorkWeek, 
+  isValidWeekForCreation, 
+  isValidWeekForEdit, 
+  isValidWeekForDeletion 
+} from '../common/utils/week-utils';
 
 @Injectable()
 export class ReportsService {
@@ -19,18 +24,21 @@ export class ReportsService {
   ) {
     const { weekNumber, year, tasks } = createReportDto;
 
-    // Validate week/year combination
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const isValidWeek = this.isValidWeekForCreation(
-      weekNumber,
-      year,
-      currentWeek,
-      currentYear,
-    );
+    /**
+     * VALIDATION TUẦN LÀM VIỆC:
+     * - Chỉ cho phép tạo báo cáo cho tuần trước, hiện tại, tiếp theo
+     * - Tuần hiện tại được tính theo work week logic (T6-T5)
+     * - Kiểm tra dựa trên getCurrentWorkWeek() đã được cập nhật
+     */
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
+    console.log('🔍 Create report validation - current work week:', { currentWeek, currentYear });
+    console.log('🔍 Create report validation - requested week:', { weekNumber, year });
+    
+    const isValidWeek = isValidWeekForCreation(weekNumber, year, currentWeek, currentYear);
 
     if (!isValidWeek) {
       throw new BadRequestException(
-        'Chỉ có thể tạo báo cáo cho tuần trong khoảng thời gian cho phép',
+        'Chỉ có thể tạo báo cáo cho tuần hiện tại, tuần trước và tuần sau',
       );
     }
 
@@ -61,7 +69,7 @@ export class ReportsService {
       }
     }
 
-    // Create report with tasks
+    // Create report with tasks (6-day work week)
     const report = await this.prisma.report.create({
       data: {
         weekNumber,
@@ -77,7 +85,6 @@ export class ReportsService {
             thursday: task.thursday || false,
             friday: task.friday || false,
             saturday: task.saturday || false,
-            sunday: task.sunday || false,
             isCompleted: task.isCompleted || false,
             reasonNotDone: task.reasonNotDone,
           })),
@@ -126,17 +133,18 @@ export class ReportsService {
       throw new ForbiddenException('Cannot update locked report');
     }
 
-    // Validate week edit permissions
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const isValidForEdit = this.isValidWeekForEdit(
+    // Validate week edit permissions using updated logic
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
+    const isValidForEdit = isValidWeekForEdit(
       existingReport.weekNumber,
       existingReport.year,
       currentWeek,
       currentYear,
     );
+    
     if (!isValidForEdit) {
       throw new ForbiddenException(
-        'Can only edit reports for current week, previous week, or next week',
+        'Chỉ có thể chỉnh sửa báo cáo cho tuần hiện tại, tuần trước và tuần sau',
       );
     }
 
@@ -155,31 +163,40 @@ export class ReportsService {
             );
           }
         }
+        
         await prisma.reportTask.deleteMany({
           where: { reportId },
         });
 
-        // Create new tasks
+        // Create new tasks - FIX: Ensure required fields are present
         if (updateReportDto.tasks.length > 0) {
+          const tasksToCreate = updateReportDto.tasks.map((task) => ({
+            reportId,
+            taskName: task.taskName || '', // Ensure required field is present
+            monday: task.monday || false,
+            tuesday: task.tuesday || false,
+            wednesday: task.wednesday || false,
+            thursday: task.thursday || false,
+            friday: task.friday || false,
+            saturday: task.saturday || false,
+            isCompleted: task.isCompleted || false,
+            reasonNotDone: task.reasonNotDone || null,
+          }));
+
           await prisma.reportTask.createMany({
-            data: updateReportDto.tasks.map((task) => ({
-              ...task,
-              reportId,
-            })),
+            data: tasksToCreate,
           });
         }
       }
 
       // Update report with only provided fields (PATCH behavior)
-      const updateData: any = {};
+      const updateData: any = {
+        updatedAt: new Date(), // ALWAYS update timestamp when report is modified
+      };
+      
       if (updateReportDto.isCompleted !== undefined) {
         updateData.isCompleted = updateReportDto.isCompleted;
       }
-
-      if (updateReportDto.updatedAt) {
-        updateData.updatedAt = new Date();
-      }
-
 
       // Update the report
       const updatedReport = await prisma.report.update({
@@ -256,7 +273,14 @@ export class ReportsService {
   }
 
   async getCurrentWeekReport(userId: string) {
-    const { weekNumber, year } = getCurrentWeek();
+    /**
+     * LẤY BÁO CÁO TUẦN HIỆN TẠI:
+     * - Sử dụng getCurrentWorkWeek() để xác định tuần hiện tại
+     * - Tuần hiện tại được tính theo logic T6-T5
+     * - Kết quả sẽ đồng bộ với frontend
+     */
+    const { weekNumber, year } = getCurrentWorkWeek();
+    console.log('🔍 Backend getCurrentWeekReport - current work week:', { weekNumber, year });
 
     const report = await this.prisma.report.findUnique({
       where: {
@@ -286,6 +310,7 @@ export class ReportsService {
       },
     });
 
+    console.log('🔍 Found current week report:', report ? `Report ID: ${report.id}, Week: ${report.weekNumber}/${report.year}` : 'No report found');
     return report;
   }
 
@@ -370,7 +395,7 @@ export class ReportsService {
     const task = await this.prisma.reportTask.findFirst({
       where: {
         id: taskId,
-        report: { userId }, // Ensure the task belongs to a report owned by the user
+        report: { userId },
       },
       include: {
         report: true,
@@ -386,23 +411,33 @@ export class ReportsService {
       throw new ForbiddenException('Cannot delete task from locked report');
     }
 
-    // Validate week edit permissions
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const isValidForEdit = this.isValidWeekForEdit(
+    // Validate week edit permissions using updated logic
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
+    const isValidForEdit = isValidWeekForEdit(
       task.report.weekNumber,
       task.report.year,
       currentWeek,
       currentYear,
     );
+    
     if (!isValidForEdit) {
       throw new ForbiddenException(
-        'Can only edit reports for current week, previous week, or next week',
+        'Chỉ có thể chỉnh sửa báo cáo cho tuần hiện tại, tuần trước và tuần sau',
       );
     }
 
-    // Delete the task
-    await this.prisma.reportTask.delete({
-      where: { id: taskId },
+    // Use transaction to update both task and report timestamp
+    await this.prisma.$transaction(async (prisma) => {
+      // Delete the task
+      await prisma.reportTask.delete({
+        where: { id: taskId },
+      });
+
+      // Update report timestamp
+      await prisma.report.update({
+        where: { id: task.report.id },
+        data: { updatedAt: new Date() },
+      });
     });
 
     return { message: 'Task deleted successfully' };
@@ -413,7 +448,7 @@ export class ReportsService {
     const report = await this.prisma.report.findFirst({
       where: { 
         id: reportId,
-        userId: userId // Ensure user owns this report
+        userId: userId
       },
       include: { user: true },
     });
@@ -427,9 +462,9 @@ export class ReportsService {
       throw new ForbiddenException('Không thể xóa báo cáo đã bị khóa');
     }
 
-    // Check if week is still deletable (ONLY current week and next week)
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const isDeletableWeek = this.isValidWeekForDeletion(
+    // Check if week is still deletable using updated logic
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
+    const isDeletableWeek = isValidWeekForDeletion(
       report.weekNumber,
       report.year,
       currentWeek,
@@ -456,90 +491,94 @@ export class ReportsService {
     });
   }
 
-  private isValidWeekForCreation(
-    weekNumber: number,
-    year: number,
-    currentWeek: number,
-    currentYear: number,
-  ): boolean {
-    // Allow creation for previous week, current week, and next week
-    const isCurrentWeek = weekNumber === currentWeek && year === currentYear;
-    const isNextWeek = this.isNextWeek(
-      weekNumber,
-      year,
+  // New method to update individual task
+  async updateTask(userId: string, taskId: string, updateTaskDto: any) {
+    // Find the task and verify ownership
+    const task = await this.prisma.reportTask.findFirst({
+      where: {
+        id: taskId,
+        report: { userId },
+      },
+      include: {
+        report: true,
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Task not found or access denied');
+    }
+
+    // Check if the report is locked
+    if (task.report.isLocked) {
+      throw new ForbiddenException('Cannot update task in locked report');
+    }
+
+    // Validate week edit permissions using updated logic
+    const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
+    const isValidForEdit = isValidWeekForEdit(
+      task.report.weekNumber,
+      task.report.year,
       currentWeek,
       currentYear,
     );
-    const isPreviousWeek = this.isPreviousWeek(
-      weekNumber,
-      year,
-      currentWeek,
-      currentYear,
-    );
-
-    return isCurrentWeek || isNextWeek || isPreviousWeek;
-  }
-
-  private isValidWeekForEdit(
-    weekNumber: number,
-    year: number,
-    currentWeek: number,
-    currentYear: number,
-  ): boolean {
-    // Can edit current week, next week, or previous week
-    const isCurrentWeek = weekNumber === currentWeek && year === currentYear;
-    const isNextWeek = this.isNextWeek(
-      weekNumber,
-      year,
-      currentWeek,
-      currentYear,
-    );
-    const isPreviousWeek = this.isPreviousWeek(
-      weekNumber,
-      year,
-      currentWeek,
-      currentYear,
-    );
-
-    return isCurrentWeek || isNextWeek || isPreviousWeek;
-  }
-
-  private isNextWeek(
-    weekNumber: number,
-    year: number,
-    currentWeek: number,
-    currentYear: number,
-  ): boolean {
-    // Check if it's the next week
-    if (year === currentYear) {
-      return weekNumber === currentWeek + 1;
+    
+    if (!isValidForEdit) {
+      throw new ForbiddenException(
+        'Chỉ có thể chỉnh sửa báo cáo cho tuần hiện tại, tuần trước và tuần sau',
+      );
     }
 
-    // Handle year transition (week 52/53 of current year to week 1 of next year)
-    if (year === currentYear + 1 && currentWeek >= 52 && weekNumber === 1) {
-      return true;
+    // Validate: require reasonNotDone if not completed
+    if (
+      updateTaskDto.isCompleted === false &&
+      (!updateTaskDto.reasonNotDone || !updateTaskDto.reasonNotDone.trim())
+    ) {
+      throw new BadRequestException(
+        'Lý do chưa hoàn thành là bắt buộc cho các công việc chưa hoàn thành',
+      );
     }
 
-    return false;
-  }
+    // Use transaction to update both task and report timestamp
+    return this.prisma.$transaction(async (prisma) => {
+      // Only allow updating allowed fields (6-day work week)
+      const allowedFields = [
+        'taskName',
+        'monday',
+        'tuesday',
+        'wednesday',
+        'thursday',
+        'friday',
+        'saturday',
+        'isCompleted',
+        'reasonNotDone',
+      ];
+      
+      // FIX: Build updateData with proper type checking
+      const updateData: any = {};
+      for (const key of allowedFields) {
+        if (updateTaskDto[key] !== undefined) {
+          if (key === 'taskName' && updateTaskDto[key] === '') {
+            // Don't allow empty task name
+            throw new BadRequestException('Tên công việc không được để trống');
+          }
+          updateData[key] = updateTaskDto[key];
+        }
+      }
 
-  private isPreviousWeek(
-    weekNumber: number,
-    year: number,
-    currentWeek: number,
-    currentYear: number,
-  ): boolean {
-    // Check if it's the previous week
-    if (year === currentYear) {
-      return weekNumber === currentWeek - 1;
-    }
+      // Update the task
+      const updatedTask = await prisma.reportTask.update({
+        where: { id: taskId },
+        data: updateData,
+      });
 
-    // Handle year transition (week 1 of current year to week 52/53 of previous year)
-    if (year === currentYear - 1 && currentWeek === 1 && weekNumber >= 52) {
-      return true;
-    }
+      // Update report timestamp
+      await prisma.report.update({
+        where: { id: task.report.id },
+        data: { updatedAt: new Date() },
+      });
 
-    return false;
+      return updatedTask;
+    });
   }
 
   private checkIfReportCompleted(tasks: any[]): boolean {
@@ -649,7 +688,7 @@ export class ReportsService {
 
   // Method for scheduled tasks
   async lockReportsForCurrentWeek() {
-    const { weekNumber, year } = getCurrentWeek();
+    const { weekNumber, year } = getCurrentWorkWeek();
 
     // Lock reports from previous week (current week - 1)
     let prevWeekNumber = weekNumber - 1;
@@ -686,99 +725,5 @@ export class ReportsService {
     });
 
     return result;
-  }
-
-  // New method to update individual task
-  async updateTask(userId: string, taskId: string, updateTaskDto: any) {
-    // Find the task and verify ownership
-    const task = await this.prisma.reportTask.findFirst({
-      where: {
-        id: taskId,
-        report: { userId },
-      },
-      include: {
-        report: true,
-      },
-    });
-
-    if (!task) {
-      throw new NotFoundException('Task not found or access denied');
-    }
-
-    // Check if the report is locked
-    if (task.report.isLocked) {
-      throw new ForbiddenException('Cannot update task in locked report');
-    }
-
-    // Validate week edit permissions
-    const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
-    const isValidForEdit = this.isValidWeekForEdit(
-      task.report.weekNumber,
-      task.report.year,
-      currentWeek,
-      currentYear,
-    );
-    if (!isValidForEdit) {
-      throw new ForbiddenException(
-        'Can only edit reports for current week, previous week, or next week',
-      );
-    }
-
-    // Validate: require reasonNotDone if not completed
-    if (
-      updateTaskDto.isCompleted === false &&
-      (!updateTaskDto.reasonNotDone || !updateTaskDto.reasonNotDone.trim())
-    ) {
-      throw new BadRequestException(
-        'Lý do chưa hoàn thành là bắt buộc cho các công việc chưa hoàn thành',
-      );
-    }
-
-    // Only allow updating allowed fields
-    const allowedFields = [
-      'taskName',
-      'monday',
-      'tuesday',
-      'wednesday',
-      'thursday',
-      'friday',
-      'saturday',
-      'sunday',
-      'isCompleted',
-      'reasonNotDone',
-    ];
-    const updateData: any = {};
-    for (const key of allowedFields) {
-      if (updateTaskDto[key] !== undefined) {
-        updateData[key] = updateTaskDto[key];
-      }
-    }
-
-    // Update the task
-    const updatedTask = await this.prisma.reportTask.update({
-      where: { id: taskId },
-      data: updateData,
-    });
-
-    return updatedTask;
-  }
-
-  // Updated method to check if week is valid for deletion (current week and next week only)
-  private isValidWeekForDeletion(
-    weekNumber: number,
-    year: number,
-    currentWeek: number,
-    currentYear: number,
-  ): boolean {
-    // Allow deletion for current week and next week only
-    const isCurrentWeek = weekNumber === currentWeek && year === currentYear;
-    const isNextWeek = this.isNextWeek(
-      weekNumber,
-      year,
-      currentWeek,
-      currentYear,
-    );
-
-    return isCurrentWeek || isNextWeek;
   }
 }

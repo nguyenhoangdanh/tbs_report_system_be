@@ -1,11 +1,9 @@
 import { Module } from '@nestjs/common';
 import { StatisticsController } from './statistics.controller';
 import { StatisticsService } from './statistics.service';
-import { PrismaService } from '../common/prisma.service';
-import { HierarchyReportsModule } from '../hierarchy-reports/hierarchy-reports.module';
+import { PrismaService } from 'src/common/prisma.service';
 
 @Module({
-  imports: [HierarchyReportsModule],
   controllers: [StatisticsController],
   providers: [StatisticsService, PrismaService],
   exports: [StatisticsService],

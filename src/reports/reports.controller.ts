@@ -2,176 +2,173 @@ import {
   Controller,
   Get,
   Post,
-  Patch, // Changed from Put to Patch
-  Delete,
   Body,
+  Patch,
   Param,
-  Query,
+  Delete,
   UseGuards,
-  Req,
-  NotFoundException,
-  ForbiddenException,
+  Request,
+  Query,
+  ParseIntPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
-  ApiTags,
   ApiBearerAuth,
+  ApiTags,
   ApiOperation,
   ApiResponse,
+  ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { CreateWeeklyReportDto, UpdateReportDto } from './dto/report.dto';
+import {
+  CreateWeeklyReportDto,
+  UpdateReportDto,
+  UpdateTaskDto,
+} from './dto/report.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '@prisma/client';
 
-// Replace the previous PaginationQueryDto definition with:
-interface PaginationQueryDto {
-  page?: number;
-  limit?: number;
-}
-
-@ApiTags('Reports')
-@ApiBearerAuth('JWT-auth')
-@Controller('reports')
+@ApiTags('reports')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
+@Controller('reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create weekly report' })
-  @ApiResponse({ status: 201, description: 'Report created successfully' })
-  async createWeeklyReport(
+  @ApiOperation({ summary: 'Tạo báo cáo tuần mới' })
+  @ApiResponse({ status: 201, description: 'Báo cáo đã được tạo thành công' })
+  @ApiResponse({ status: 400, description: 'Dữ liệu không hợp lệ' })
+  @ApiResponse({ status: 409, description: 'Báo cáo đã tồn tại' })
+  create(
+    @Request() req: any,
     @Body() createReportDto: CreateWeeklyReportDto,
-    @Req() req: any,
   ) {
     return this.reportsService.createWeeklyReport(req.user.id, createReportDto);
   }
 
-  @Get('my')
-  @ApiOperation({ summary: 'Get my reports with pagination' })
-  async getMyReports(@Query() query: PaginationQueryDto, @Req() req: any) {
-    const page = query.page ? Number(query.page) : 1;
-    const limit = query.limit ? Number(query.limit) : 10;
+  @Get('my-reports')
+  @ApiOperation({ summary: 'Lấy danh sách báo cáo của tôi' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  getMyReports(
+    @Request() req: any,
+    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
+  ) {
     return this.reportsService.getMyReports(req.user.id, page, limit);
   }
 
   @Get('current-week')
-  @ApiOperation({ summary: 'Get current week report' })
-  async getCurrentWeekReport(@Req() req: any) {
-    const report = await this.reportsService.getCurrentWeekReport(req.user.id);
-    if (!report) {
-      throw new NotFoundException('No report found for current week');
-    }
-    return report;
+  @ApiOperation({ summary: 'Lấy báo cáo tuần hiện tại' })
+  getCurrentWeekReport(@Request() req: any) {
+    return this.reportsService.getCurrentWeekReport(req.user.id);
   }
 
-   // Admin/Superadmin endpoints
-  @Get('all')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'Get all reports (Admin/Superadmin only)' })
-  async getAllReports(
-    @Query() query: PaginationQueryDto,
-    @Query('departmentId') departmentId?: string,
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
+  @Get('week/:weekNumber/:year')
+  @ApiOperation({ summary: 'Lấy báo cáo theo tuần' })
+  @ApiParam({ name: 'weekNumber', type: Number })
+  @ApiParam({ name: 'year', type: Number })
+  getReportByWeek(
+    @Request() req: any,
+    @Param('weekNumber', ParseIntPipe) weekNumber: number,
+    @Param('year', ParseIntPipe) year: number,
   ) {
-    const page = query.page ? Number(query.page) : 1;
-    const limit = query.limit ? Number(query.limit) : 10;
-    return this.reportsService.getAllReports(
-      page,
-      limit,
-      departmentId,
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
-  }
-
-  @Get('stats')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'Get reports statistics (Admin/Superadmin only)' })
-  async getReportsStats(
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-  ) {
-    return this.reportsService.getReportStats(
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
-  }
-
-  @Get('week/:weekNumber/year/:year')
-  @ApiOperation({ summary: 'Get report by week and year' })
-  async getReportByWeek(
-    @Param('weekNumber') weekNumber: string,
-    @Param('year') year: string,
-    @Req() req: any,
-  ) {
-    const report = await this.reportsService.getReportByWeek(
-      req.user.id,
-      parseInt(weekNumber),
-      parseInt(year),
-    );
-    if (!report) {
-      throw new NotFoundException('No report found for this week');
-    }
-    return report;
+    return this.reportsService.getReportByWeek(req.user.id, weekNumber, year);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get report by ID' })
-  async getReportById(@Param('id') id: string, @Req() req: any) {
-    const report = await this.reportsService.getReportById(id, req.user.id);
-
-    // Check if user can access this report
-    if (
-      report.userId !== req.user.id &&
-      !['ADMIN', 'SUPERADMIN'].includes(req.user.role)
-    ) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    return report;
+  @ApiOperation({ summary: 'Lấy chi tiết báo cáo' })
+  @ApiParam({ name: 'id', type: String })
+  getReport(@Request() req: any, @Param('id') id: string) {
+    return this.reportsService.getReportById(id, req.user.id);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update report' })
-  async updateReport(
+  @ApiOperation({ summary: 'Cập nhật báo cáo' })
+  @ApiParam({ name: 'id', type: String })
+  update(
+    @Request() req: any,
     @Param('id') id: string,
     @Body() updateReportDto: UpdateReportDto,
-    @Req() req: any,
   ) {
     return this.reportsService.updateReport(req.user.id, id, updateReportDto);
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete report' })
-  @ApiResponse({ status: 200, description: 'Report deleted successfully' })
-  @ApiResponse({ status: 404, description: 'Report not found' })
-  @ApiResponse({ status: 403, description: 'Access denied or report locked' })
-  async deleteReport(@Param('id') id: string, @Req() req: any) {
-    await this.reportsService.deleteReport(req.user.id, id);
-    return { message: 'Báo cáo đã được xóa thành công' };
+  @ApiOperation({ summary: 'Xóa báo cáo' })
+  @ApiParam({ name: 'id', type: String })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@Request() req: any, @Param('id') id: string) {
+    return this.reportsService.deleteReport(req.user.id, id);
   }
 
-  // New endpoint to delete individual task
+  @Patch('tasks/:taskId')
+  @ApiOperation({ summary: 'Cập nhật công việc' })
+  @ApiParam({ name: 'taskId', type: String })
+  updateTask(
+    @Request() req: any,
+    @Param('taskId') taskId: string,
+    @Body() updateTaskDto: UpdateTaskDto,
+  ) {
+    return this.reportsService.updateTask(req.user.id, taskId, updateTaskDto);
+  }
+
   @Delete('tasks/:taskId')
-  @ApiOperation({ summary: 'Delete individual task' })
-  @ApiResponse({ status: 200, description: 'Task deleted successfully' })
-  async deleteTask(@Param('taskId') taskId: string, @Req() req: any) {
+  @ApiOperation({ summary: 'Xóa công việc' })
+  @ApiParam({ name: 'taskId', type: String })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteTask(@Request() req: any, @Param('taskId') taskId: string) {
     return this.reportsService.deleteTask(req.user.id, taskId);
   }
 
-  // New endpoint to update individual task
-  @Patch('tasks/:taskId')
-  @ApiOperation({ summary: 'Update individual task' })
-  @ApiResponse({ status: 200, description: 'Task updated successfully' })
-  async updateTask(
-    @Param('taskId') taskId: string,
-    @Body() updateTaskDto: any,
-    @Req() req: any,
+  // Admin endpoints
+  @Get('admin/all')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Lấy tất cả báo cáo (Admin)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'departmentId', required: false, type: String })
+  @ApiQuery({ name: 'weekNumber', required: false, type: Number })
+  @ApiQuery({ name: 'year', required: false, type: Number })
+  getAllReports(
+    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
+    @Query('departmentId') departmentId?: string,
+    @Query('weekNumber', new ParseIntPipe({ optional: true })) weekNumber?: number,
+    @Query('year', new ParseIntPipe({ optional: true })) year?: number,
   ) {
-    return this.reportsService.updateTask(req.user.id, taskId, updateTaskDto);
+    return this.reportsService.getAllReports(page, limit, departmentId, weekNumber, year);
+  }
+
+  @Get('admin/stats')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Lấy thống kê báo cáo (Admin)' })
+  @ApiQuery({ name: 'weekNumber', required: false, type: Number })
+  @ApiQuery({ name: 'year', required: false, type: Number })
+  getReportStats(
+    @Query('weekNumber', new ParseIntPipe({ optional: true })) weekNumber?: number,
+    @Query('year', new ParseIntPipe({ optional: true })) year?: number,
+  ) {
+    return this.reportsService.getReportStats(weekNumber, year);
+  }
+
+  @Post('admin/lock-reports/:weekNumber/:year')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Khóa báo cáo theo tuần (Admin)' })
+  @ApiParam({ name: 'weekNumber', type: Number })
+  @ApiParam({ name: 'year', type: Number })
+  lockReportsByWeek(
+    @Param('weekNumber', ParseIntPipe) weekNumber: number,
+    @Param('year', ParseIntPipe) year: number,
+  ) {
+    return this.reportsService.lockReportsByWeek(weekNumber, year);
   }
 }

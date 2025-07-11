@@ -1,106 +1,137 @@
-import {
-  IsArray,
-  IsBoolean,
-  IsInt,
-  IsOptional,
-  IsString,
-  Max,
-  Min,
-  ValidateNested,
-} from 'class-validator';
-import { Type, Transform } from 'class-transformer';
+import { IsInt, IsOptional, IsBoolean, IsString, IsArray, ValidateNested, Min, Max, IsNotEmpty } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-export class CreateTaskReportDto {
-  @ApiProperty()
+export class CreateTaskDto {
+  @ApiProperty({ description: 'Tên công việc' })
   @IsString()
+  @IsNotEmpty({ message: 'Tên công việc không được để trống' })
   taskName: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Làm việc thứ Hai' })
   @IsOptional()
   @IsBoolean()
   monday?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Làm việc thứ Ba' })
   @IsOptional()
   @IsBoolean()
   tuesday?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Làm việc thứ Tư' })
   @IsOptional()
   @IsBoolean()
   wednesday?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Làm việc thứ Năm' })
   @IsOptional()
   @IsBoolean()
   thursday?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Làm việc thứ Sáu' })
   @IsOptional()
   @IsBoolean()
   friday?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Làm việc thứ Bảy' })
   @IsOptional()
   @IsBoolean()
   saturday?: boolean;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsBoolean()
-  sunday?: boolean;
-
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Công việc đã hoàn thành' })
   @IsOptional()
   @IsBoolean()
   isCompleted?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Lý do chưa hoàn thành' })
   @IsOptional()
   @IsString()
   reasonNotDone?: string;
 }
 
 export class CreateWeeklyReportDto {
-  @ApiProperty({ minimum: 1, maximum: 53 })
-  @Transform(({ value }) => parseInt(value, 10))
-  @IsInt({ message: 'weekNumber must be an integer number' })
-  @Min(1, { message: 'weekNumber must not be less than 1' })
-  @Max(53, { message: 'weekNumber must not be greater than 53' })
+  @ApiProperty({ description: 'Số tuần', minimum: 1, maximum: 53 })
+  @IsInt()
+  @Min(1)
+  @Max(53)
   weekNumber: number;
 
-  @ApiProperty({ minimum: 2020, maximum: 2030 })
-  @Transform(({ value }) => parseInt(value, 10))
-  @IsInt({ message: 'year must be an integer number' })
-  @Min(2020, { message: 'year must not be less than 2020' })
-  @Max(2030, { message: 'year must not be greater than 2030' })
+  @ApiProperty({ description: 'Năm', minimum: 2020, maximum: 2030 })
+  @IsInt()
+  @Min(2020)
+  @Max(2030)
   year: number;
 
-  @ApiProperty({ type: [CreateTaskReportDto] })
+  @ApiProperty({ description: 'Danh sách công việc', type: [CreateTaskDto] })
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => CreateTaskReportDto)
-  tasks: CreateTaskReportDto[];
+  @Type(() => CreateTaskDto)
+  tasks: CreateTaskDto[];
 }
 
-export class UpdateReportDto {
-  @ApiProperty({ required: false, description: 'Report completion status' })
+export class UpdateTaskDto {
+  @ApiPropertyOptional({ description: 'Tên công việc' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'Tên công việc không được để trống' })
+  taskName?: string;
+
+  @ApiPropertyOptional({ description: 'Làm việc thứ Hai' })
+  @IsOptional()
+  @IsBoolean()
+  monday?: boolean;
+
+  @ApiPropertyOptional({ description: 'Làm việc thứ Ba' })
+  @IsOptional()
+  @IsBoolean()
+  tuesday?: boolean;
+
+  @ApiPropertyOptional({ description: 'Làm việc thứ Tư' })
+  @IsOptional()
+  @IsBoolean()
+  wednesday?: boolean;
+
+  @ApiPropertyOptional({ description: 'Làm việc thứ Năm' })
+  @IsOptional()
+  @IsBoolean()
+  thursday?: boolean;
+
+  @ApiPropertyOptional({ description: 'Làm việc thứ Sáu' })
+  @IsOptional()
+  @IsBoolean()
+  friday?: boolean;
+
+  @ApiPropertyOptional({ description: 'Làm việc thứ Bảy' })
+  @IsOptional()
+  @IsBoolean()
+  saturday?: boolean;
+
+  @ApiPropertyOptional({ description: 'Công việc đã hoàn thành' })
   @IsOptional()
   @IsBoolean()
   isCompleted?: boolean;
 
-  @ApiProperty({ type: [CreateTaskReportDto], required: false })
+  @ApiPropertyOptional({ description: 'Lý do chưa hoàn thành' })
+  @IsOptional()
+  @IsString()
+  reasonNotDone?: string;
+}
+
+export class UpdateReportDto {
+  @ApiPropertyOptional({ description: 'Báo cáo đã hoàn thành' })
+  @IsOptional()
+  @IsBoolean()
+  isCompleted?: boolean;
+
+  @ApiPropertyOptional({ description: 'Danh sách công việc', type: [UpdateTaskDto] })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => CreateTaskReportDto)
-  tasks?: CreateTaskReportDto[];
+  @Type(() => UpdateTaskDto)
+  tasks?: UpdateTaskDto[];
 
-  @ApiPropertyOptional({ type: Date, description: 'Last updated timestamp' })
+  @ApiPropertyOptional({ description: 'Cập nhật thời gian' })
   @IsOptional()
-  @Type(() => Date)
-  @IsString()
-  @Transform(({ value }) => (value ? new Date(value) : undefined))
-  updatedAt?: Date;
+  @IsBoolean()
+  updatedAt?: boolean;
 }

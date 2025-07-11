@@ -1,293 +1,427 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  UseGuards,
+  Query,
+  Param,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiParam } from '@nestjs/swagger';
+import { HierarchyReportsService } from './hierarchy-reports.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { GetUser } from '../common/decorators/get-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { HierarchyReportsService } from './hierarchy-reports.service';
+import { getCurrentWorkWeek } from '../common/utils/week-utils';
 
-@ApiTags('Hierarchy Reports')
-@ApiBearerAuth('JWT-auth')
+@ApiTags('hierarchy-reports')
 @Controller('hierarchy-reports')
 @UseGuards(JwtAuthGuard)
 export class HierarchyReportsController {
   constructor(private readonly hierarchyReportsService: HierarchyReportsService) {}
 
+  @Get('my-view')
+  @ApiOperation({ summary: 'Get hierarchy view based on user role and permissions' })
+  @ApiResponse({ status: 200, description: 'Hierarchy view retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @ApiQuery({ name: 'month', required: false, description: 'Month' })
+  @HttpCode(HttpStatus.OK)
+  async getMyHierarchyView(
+    @GetUser() user: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+    @Query('month') month?: string,
+  ) {
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    if (month) {
+      const parsedMonth = parseInt(month, 10);
+      if (!isNaN(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12) {
+        filters.month = parsedMonth;
+      }
+    }
+
+    console.log(`API Request - User: ${user.id}, Role: ${user.role}, Filters:`, filters);
+    
+    const result = await this.hierarchyReportsService.getMyHierarchyView(user.id, user.role, filters);
+    
+    return result;
+  }
+
   @Get('offices-overview')
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN, Role.SUPERADMIN)
-  @ApiOperation({ summary: 'Get overview of all offices with statistics (Admin/Superadmin only)' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
+  @ApiOperation({ summary: 'Get offices overview (Admin/Superadmin only)' })
   @ApiResponse({ status: 200, description: 'Offices overview retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
   async getOfficesOverview(
-    @Req() req: any,
+    @GetUser() user: any,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
   ) {
-    return this.hierarchyReportsService.getOfficesOverview(
-      req.user,
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    return this.hierarchyReportsService.getOfficesOverview(user.id, filters);
   }
 
-  @Get('office/:officeId/details')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER)
-  @ApiOperation({ summary: 'Get detailed office statistics with departments breakdown' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiResponse({ status: 200, description: 'Office details retrieved successfully' })
-  async getOfficeDetails(
-    @Param('officeId') officeId: string,
-    @Req() req: any,
+  @Get('position/:positionId')
+  @ApiOperation({ summary: 'Get position details' })
+  @ApiResponse({ status: 200, description: 'Position details retrieved successfully' })
+  @ApiParam({ name: 'positionId', description: 'Position ID' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
+  async getPositionDetails(
+    @GetUser() user: any,
+    @Param('positionId') positionId: string,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
   ) {
-    return this.hierarchyReportsService.getOfficeDetails(
-      officeId,
-      req.user,
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    return this.hierarchyReportsService.getPositionDetails(user.id, user.role, positionId, filters);
   }
 
-  @Get('department/:departmentId/details')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get detailed department statistics with users breakdown' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiResponse({ status: 200, description: 'Department details retrieved successfully' })
-  async getDepartmentDetails(
-    @Param('departmentId') departmentId: string,
-    @Req() req: any,
+  @Get('position-users/:positionId')
+  @ApiOperation({ summary: 'Get position users list' })
+  @ApiResponse({ status: 200, description: 'Position users list retrieved successfully' })
+  @ApiParam({ name: 'positionId', description: 'Position ID' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
+  async getPositionUsers(
+    @GetUser() user: any,
+    @Param('positionId') positionId: string,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
   ) {
-    return this.hierarchyReportsService.getDepartmentDetails(
-      departmentId,
-      req.user,
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    return this.hierarchyReportsService.getPositionUsers(user.id, user.role, positionId, filters);
   }
 
-  @Get('user/:userId/details')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get detailed user statistics with task breakdown' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Number of reports to retrieve' })
+  @Get('user/:userId')
+  @ApiOperation({ summary: 'Get user details' })
   @ApiResponse({ status: 200, description: 'User details retrieved successfully' })
+  @ApiParam({ name: 'userId', description: 'User ID' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Limit number of reports' })
+  @HttpCode(HttpStatus.OK)
   async getUserDetails(
+    @GetUser() user: any,
     @Param('userId') userId: string,
-    @Req() req: any,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.hierarchyReportsService.getUserDetails(
-      userId,
-      req.user,
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-      limit ? parseInt(limit) : 10,
-    );
-  }
+    const filters: any = {};
 
-  @Get('my-hierarchy-view')
-  @ApiOperation({ summary: 'Get hierarchy view based on current user role' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiResponse({ status: 200, description: 'Hierarchy view retrieved successfully' })
-  async getMyHierarchyView(
-    @Req() req: any,
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-  ) {
-    return this.hierarchyReportsService.getMyHierarchyView(
-      req.user,
-      weekNumber ? parseInt(weekNumber) : undefined,
-      year ? parseInt(year) : undefined,
-    );
-  }
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
 
-  @Get('task-completion-trends')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get task completion trends across hierarchy' })
-  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office' })
-  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
-  @ApiQuery({ name: 'weeks', required: false, description: 'Number of weeks to analyze (default: 8)' })
-  @ApiResponse({ status: 200, description: 'Task completion trends retrieved successfully' })
-  async getTaskCompletionTrends(
-    @Req() req: any,
-    @Query('officeId') officeId?: string,
-    @Query('departmentId') departmentId?: string,
-    @Query('weeks') weeks?: string,
-  ) {
-    return this.hierarchyReportsService.getTaskCompletionTrends(req.user, {
-      officeId,
-      departmentId,
-      weeks: weeks ? parseInt(weeks) : 8,
-    });
-  }
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
 
-  @Get('incomplete-reasons-hierarchy')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get incomplete task reasons analysis across hierarchy' })
-  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office' })
-  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiResponse({ status: 200, description: 'Incomplete reasons analysis retrieved successfully' })
-  async getIncompleteReasonsHierarchy(
-    @Req() req: any,
-    @Query('officeId') officeId?: string,
-    @Query('departmentId') departmentId?: string,
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-  ) {
-    return this.hierarchyReportsService.getIncompleteReasonsHierarchy(req.user, {
-      officeId,
-      departmentId,
-      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
-      year: year ? parseInt(year) : undefined,
-    });
-  }
+    if (limit) {
+      const parsedLimit = parseInt(limit, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0 && parsedLimit <= 100) {
+        filters.limit = parsedLimit;
+      }
+    }
 
-  @Get('admin/user/:userId/reports')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get user reports for admin management' })
-  @ApiQuery({ name: 'page', required: false, description: 'Page number' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Filter by week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Filter by year' })
-  @ApiResponse({ status: 200, description: 'User reports retrieved successfully' })
-  async getUserReportsForAdmin(
-    @Param('userId') userId: string,
-    @Req() req: any,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('weekNumber') weekNumber?: string,
-    @Query('year') year?: string,
-  ) {
-    return this.hierarchyReportsService.getUserReportsForAdmin(userId, req.user, {
-      page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 10,
-      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
-      year: year ? parseInt(year) : undefined,
-    });
-  }
-
-  @Get('admin/user/:userId/report/:reportId')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get specific report details for admin' })
-  @ApiResponse({ status: 200, description: 'Report details retrieved successfully' })
-  async getReportDetailsForAdmin(
-    @Param('userId') userId: string,
-    @Param('reportId') reportId: string,
-    @Req() req: any,
-  ) {
-    return this.hierarchyReportsService.getReportDetailsForAdmin(userId, reportId, req.user);
+    return this.hierarchyReportsService.getUserDetails(user.id, user.role, userId, filters);
   }
 
   @Get('employees-without-reports')
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get list of employees who have not submitted reports' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office (Admin/Superadmin only)' })
-  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get employees without reports' })
+  @ApiResponse({ status: 200, description: 'Employees without reports retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number' })
   @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
-  @ApiResponse({ status: 200, description: 'Employees without reports retrieved successfully' })
+  @HttpCode(HttpStatus.OK)
   async getEmployeesWithoutReports(
-    @Req() req: any,
+    @GetUser() user: any,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
-    @Query('officeId') officeId?: string,
-    @Query('departmentId') departmentId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.hierarchyReportsService.getEmployeesWithoutReports(req.user, {
-      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
-      year: year ? parseInt(year) : undefined,
-      officeId,
-      departmentId,
-      page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 20,
-    });
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    if (page) {
+      const parsedPage = parseInt(page, 10);
+      if (!isNaN(parsedPage) && parsedPage > 0) {
+        filters.page = parsedPage;
+      }
+    }
+
+    if (limit) {
+      const parsedLimit = parseInt(limit, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0 && parsedLimit <= 100) {
+        filters.limit = parsedLimit;
+      }
+    }
+
+    return this.hierarchyReportsService.getEmployeesWithoutReports(user.id, user.role, filters);
   }
 
   @Get('employees-incomplete-reports')
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get list of employees with incomplete reports' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office (Admin/Superadmin only)' })
-  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get employees with incomplete reports' })
+  @ApiResponse({ status: 200, description: 'Employees with incomplete reports retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number' })
   @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
-  @ApiResponse({ status: 200, description: 'Employees with incomplete reports retrieved successfully' })
+  @HttpCode(HttpStatus.OK)
   async getEmployeesWithIncompleteReports(
-    @Req() req: any,
+    @GetUser() user: any,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
-    @Query('officeId') officeId?: string,
-    @Query('departmentId') departmentId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.hierarchyReportsService.getEmployeesWithIncompleteReports(req.user, {
-      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
-      year: year ? parseInt(year) : undefined,
-      officeId,
-      departmentId,
-      page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 20,
-    });
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    if (page) {
+      const parsedPage = parseInt(page, 10);
+      if (!isNaN(parsedPage) && parsedPage > 0) {
+        filters.page = parsedPage;
+      }
+    }
+
+    if (limit) {
+      const parsedLimit = parseInt(limit, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0 && parsedLimit <= 100) {
+        filters.limit = parsedLimit;
+      }
+    }
+
+    return this.hierarchyReportsService.getEmployeesWithIncompleteReports(user.id, user.role, filters);
   }
 
   @Get('employees-reporting-status')
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER, Role.OFFICE_ADMIN)
-  @ApiOperation({ summary: 'Get comprehensive reporting status of all employees' })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiQuery({ name: 'officeId', required: false, description: 'Filter by office (Admin/Superadmin only)' })
-  @ApiQuery({ name: 'departmentId', required: false, description: 'Filter by department' })
-  @ApiQuery({ name: 'status', required: false, description: 'Filter by status: not_submitted, incomplete, completed, all' })
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get employees reporting status' })
+  @ApiResponse({ status: 200, description: 'Employees reporting status retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number' })
   @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
-  @ApiResponse({ status: 200, description: 'Employee reporting status retrieved successfully' })
+  @ApiQuery({ name: 'status', required: false, description: 'Status filter' })
+  @HttpCode(HttpStatus.OK)
   async getEmployeesReportingStatus(
-    @Req() req: any,
+    @GetUser() user: any,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
-    @Query('officeId') officeId?: string,
-    @Query('departmentId') departmentId?: string,
-    @Query('status') status?: 'not_submitted' | 'incomplete' | 'completed' | 'all',
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('status') status?: string,
   ) {
-    return this.hierarchyReportsService.getEmployeesReportingStatus(req.user, {
-      weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
-      year: year ? parseInt(year) : undefined,
-      officeId,
-      departmentId,
-      status,
-      page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 20,
-    });
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    if (page) {
+      const parsedPage = parseInt(page, 10);
+      if (!isNaN(parsedPage) && parsedPage > 0) {
+        filters.page = parsedPage;
+      }
+    }
+
+    if (limit) {
+      const parsedLimit = parseInt(limit, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0 && parsedLimit <= 100) {
+        filters.limit = parsedLimit;
+      }
+    }
+
+    if (status && ['not_submitted', 'incomplete', 'completed', 'all'].includes(status)) {
+      filters.status = status;
+    }
+
+    return this.hierarchyReportsService.getEmployeesReportingStatus(user.id, user.role, filters);
+  }
+
+  @Get('task-completion-trends')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get task completion trends' })
+  @ApiResponse({ status: 200, description: 'Task completion trends retrieved successfully' })
+  @ApiQuery({ name: 'officeId', required: false, description: 'Office ID' })
+  @ApiQuery({ name: 'departmentId', required: false, description: 'Department ID' })
+  @ApiQuery({ name: 'weeks', required: false, description: 'Number of weeks' })
+  @HttpCode(HttpStatus.OK)
+  async getTaskCompletionTrends(
+    @GetUser() user: any,
+    @Query('officeId') officeId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('weeks') weeks?: string,
+  ) {
+    const filters: any = {};
+
+    if (officeId) {
+      filters.officeId = officeId;
+    }
+
+    if (departmentId) {
+      filters.departmentId = departmentId;
+    }
+
+    if (weeks) {
+      const parsedWeeks = parseInt(weeks, 10);
+      if (!isNaN(parsedWeeks) && parsedWeeks > 0 && parsedWeeks <= 52) {
+        filters.weeks = parsedWeeks;
+      }
+    }
+
+    return this.hierarchyReportsService.getTaskCompletionTrends(user.id, user.role, filters);
+  }
+
+  @Get('incomplete-reasons-hierarchy')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get incomplete reasons hierarchy analysis' })
+  @ApiResponse({ status: 200, description: 'Incomplete reasons hierarchy analysis retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
+  async getIncompleteReasonsHierarchy(
+    @GetUser() user: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+  ) {
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    return this.hierarchyReportsService.getIncompleteReasonsHierarchy(user.id, user.role, filters);
   }
 }

@@ -121,23 +121,106 @@ function determineRole(cd: string, vt: string, pb: string): Role {
   const jobTitle = vt.toLowerCase();
   const department = pb.toLowerCase();
   
-  // SUPERADMIN - CEO
-  if (position.includes('ceo') || position.includes('tgđ')) {
+  // ADMIN - CEO/TGĐ và các chức vụ cao cấp
+  if (position.includes('ceo') || position.includes('tgđ') || position.includes('tổng giám đốc')) {
     return Role.ADMIN;
   }
   
-  // OFFICE_MANAGER - Trưởng các đơn vị
-  if (position.includes('trưởng') || position.includes('gđ') || position.includes('giám đốc')) {
-    return Role.OFFICE_MANAGER;
-  }
-  
-  // OFFICE_ADMIN - Phó trưởng, trưởng ca
-  if (position.includes('pgđ') || position.includes('t.team') || position.includes('tca') || position.includes('tp') || position.includes('t.line') || position.includes('đt') || position.includes('tt')) {
-    return Role.OFFICE_ADMIN;
-  }
-  
-  // Default USER - Công nhân, nhân viên sản xuất
+  // USER - Tất cả còn lại (sẽ phân quyền chi tiết qua isManagement và canViewHierarchy)
   return Role.USER;
+}
+
+// Function to determine if position is management and can view hierarchy
+function getPositionProperties(positionName: string): { isManagement: boolean; canViewHierarchy: boolean; level: number } {
+  const pos = positionName.toLowerCase().trim();
+  
+  // Phân loại dựa trên TÊN CHỨC DANH thực tế, không dựa trên level số
+  
+  // Cấp 0: CEO/TGĐ - Cấp cao nhất
+  if (pos === 'tgđ' || pos === 'tổng giám đốc' || pos === 'ceo' || 
+      pos.includes('tổng giám đốc') || pos.includes('ceo')) {
+    return { isManagement: true, canViewHierarchy: true, level: 0 };
+  }
+  
+  // Cấp 1: Giám đốc các đơn vị
+  if (pos === 'gđ' || pos === 'giám đốc' || 
+      pos.includes('giám đốc') && !pos.includes('phó') && !pos.includes('tổng')) {
+    return { isManagement: true, canViewHierarchy: true, level: 1 };
+  }
+  
+  // Cấp 2: Phó giám đốc
+  if (pos === 'pgđ' || pos === 'phó giám đốc' || 
+      pos.includes('phó giám đốc') || pos.includes('phó gđ')) {
+    return { isManagement: true, canViewHierarchy: true, level: 2 };
+  }
+  
+  // Cấp 3: Trưởng phòng/ban/bộ phận
+  if (pos === 'tp' || pos === 'trưởng phòng' || pos === 'trưởng ban' ||
+      pos.includes('trưởng phòng') || pos.includes('trưởng ban') || 
+      pos.includes('trưởng bộ phận') || pos.includes('trưởng khối')) {
+    return { isManagement: true, canViewHierarchy: true, level: 3 };
+  }
+  
+  // Cấp 4: Phó trưởng phòng, Trưởng nhóm/Team/Đội
+  if (pos === 'ptp' || pos === 'phó trưởng phòng' || pos === 'trưởng nhóm' ||
+      pos === 't.team' || pos === 'trưởng team' || pos === 'team leader' ||
+      pos === 'đt' || pos === 'đội trưởng' || pos === 'trưởng đội' ||
+      pos.includes('phó trưởng phòng') || pos.includes('trưởng nhóm') ||
+      pos.includes('trưởng team') || pos.includes('đội trưởng') ||
+      pos.includes('team leader') || pos.includes('group leader')) {
+    return { isManagement: true, canViewHierarchy: true, level: 4 };
+  }
+  
+  // Cấp 5: Tổ trưởng, Trưởng ca, Line Leader
+  if (pos === 'tt' || pos === 'tổ trưởng' || pos === 'trưởng tổ' ||
+      pos === 'tca' || pos === 'trưởng ca' || pos === 'ca trưởng' ||
+      pos === 't.line' || pos === 'trưởng line' || pos === 'line leader' ||
+      pos.includes('tổ trưởng') || pos.includes('trưởng tổ') ||
+      pos.includes('trưởng ca') || pos.includes('ca trưởng') ||
+      pos.includes('trưởng line') || pos.includes('line leader')) {
+    return { isManagement: true, canViewHierarchy: true, level: 5 };
+  }
+  
+  // Cấp 6: Chuyên viên cao cấp, Trợ lý cấp cao - Có quyền xem nhưng không phải quản lý
+  if (pos.includes('chuyên viên chính') || pos.includes('chuyên viên cao cấp') ||
+      pos.includes('chuyên viên senior') || pos.includes('senior') ||
+      pos === 'tl' || pos === 'trợ lý' || pos.includes('trợ lý') ||
+      pos.includes('phụ trách') || pos.includes('điều phối viên')) {
+    return { isManagement: false, canViewHierarchy: true, level: 6 };
+  }
+  
+  // Cấp 7: Chuyên viên, Nhân viên văn phòng thường
+  if (pos === 'cv' || pos === 'chuyên viên' || pos === 'nv' || pos === 'nhân viên' ||
+      pos.includes('chuyên viên') || pos.includes('nhân viên') ||
+      pos.includes('cán bộ') || pos.includes('thư ký') ||
+      pos.includes('kế toán') && !pos.includes('trưởng') ||
+      pos.includes('kỹ thuật') && !pos.includes('trưởng')) {
+    return { isManagement: false, canViewHierarchy: false, level: 7 };
+  }
+  
+  // Cấp 8: Công nhân, Lao động phổ thông
+  if (pos === 'cn' || pos === 'công nhân' || pos === 'cnkt' || pos === 'lao động' ||
+      pos.includes('công nhân') || pos.includes('thợ') || pos.includes('lao động') ||
+      pos.includes('tác nghiệp') || pos.includes('vận hành') ||
+      pos.includes('may') || pos.includes('cắt') || pos.includes('dán') ||
+      pos.includes('kiểm tra') || pos.includes('đóng gói') ||
+      pos.includes('bảo vệ') || pos.includes('lái xe') || pos.includes('tạp vụ')) {
+    return { isManagement: false, canViewHierarchy: false, level: 8 };
+  }
+  
+  // Default: Phân tích thêm dựa trên từ khóa
+  // Nếu có từ "trưởng" => có thể là quản lý
+  if (pos.includes('trưởng')) {
+    return { isManagement: true, canViewHierarchy: true, level: 5 };
+  }
+  
+  // Nếu có từ "phó" => có thể là phó
+  if (pos.includes('phó')) {
+    return { isManagement: true, canViewHierarchy: true, level: 4 };
+  }
+  
+  // Default: Nhân viên thường
+  return { isManagement: false, canViewHierarchy: false, level: 8 };
 }
 
 // Function to generate proper email
@@ -372,19 +455,34 @@ async function createPositions(positions: Set<string>): Promise<Map<string, any>
         description = positionName;
       }
 
+      // Get position properties based on name
+      const { isManagement, canViewHierarchy, level } = getPositionProperties(positionName);
+      
+      // Set isReportable based on level (CEO level 0 không cần nộp báo cáo)
+      const isReportable = level > 0;
+
       const position = await prisma.position.upsert({
         where: { name: positionName },
         update: {
           description: description,
+          level: level,
+          isManagement: isManagement,
+          canViewHierarchy: canViewHierarchy,
+          isReportable: isReportable
         },
         create: {
           name: positionName,
           description: description,
+          level: level,
+          priority: 0,
+          isManagement: isManagement,
+          isReportable: isReportable,
+          canViewHierarchy: canViewHierarchy
         },
       });
 
       positionMap.set(positionName, position);
-      console.log(`   ✅ ${positionName} → ${description}`);
+      console.log(`   ✅ ${positionName} → ${description} (Level: ${level}, Management: ${isManagement}, CanView: ${canViewHierarchy}, Reportable: ${isReportable})`);
     } catch (error) {
       console.error(`   ❌ Failed to create position ${positionName}:`, error.message);
     }
@@ -396,7 +494,8 @@ async function createPositions(positions: Set<string>): Promise<Map<string, any>
 async function createJobPositions(
   jobPositions: Map<string, { cd: string; vt: string; pb: string; tt: string }>,
   positionMap: Map<string, any>,
-  departmentMap: Map<string, any>
+  departmentMap: Map<string, any>,
+  officeMap: Map<string, any>  // Add officeMap parameter
 ): Promise<Map<string, any>> {
   console.log('\n💼 Creating/updating job positions...');
   const jobPositionMap = new Map<string, any>();
@@ -405,6 +504,7 @@ async function createJobPositions(
     try {
       const position = positionMap.get(jp.cd);
       const department = departmentMap.get(`${jp.pb}__${jp.tt}`);
+      const office = officeMap.get(jp.tt);  // Get office for denormalized officeId
 
       if (!position) {
         console.warn(`   ⚠️  Position not found: ${jp.cd} for job ${jp.vt}`);
@@ -413,6 +513,11 @@ async function createJobPositions(
 
       if (!department) {
         console.warn(`   ⚠️  Department not found: ${jp.pb} (${jp.tt}) for job ${jp.vt}`);
+        continue;
+      }
+
+      if (!office) {
+        console.warn(`   ⚠️  Office not found: ${jp.tt} for job ${jp.vt}`);
         continue;
       }
 
@@ -430,6 +535,7 @@ async function createJobPositions(
         update: {
           code: code,
           description: description,
+          officeId: office.id,  // Update officeId
         },
         create: {
           jobName: jp.vt,
@@ -437,6 +543,7 @@ async function createJobPositions(
           description: description,
           positionId: position.id,
           departmentId: department.id,
+          officeId: office.id,  // Add officeId for denormalized queries
         },
       });
 
@@ -688,7 +795,8 @@ async function main() {
     const jobPositionMap = await createJobPositions(
       processedData.jobPositions, 
       positionMap, 
-      departmentMap
+      departmentMap,
+      officeMap  // Pass officeMap
     );
     
     await createUsers(processedData.users, jobPositionMap, officeMap);

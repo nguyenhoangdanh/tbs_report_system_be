@@ -360,12 +360,12 @@ export class UsersService {
     });
   }
 
-  // Helper methods for ranking calculations
+  // Helper methods for ranking calculations - Updated thresholds
   private calculateEmployeeRanking(completionRate: number): string {
-    if (completionRate >= 90) return 'EXCELLENT';
-    if (completionRate >= 80) return 'GOOD';
-    if (completionRate >= 70) return 'AVERAGE';
-    if (completionRate >= 60) return 'BELOW_AVERAGE';
+    if (completionRate >= 100) return 'EXCELLENT';
+    if (completionRate >= 95) return 'GOOD';
+    if (completionRate >= 90) return 'AVERAGE';
+    if (completionRate >= 85) return 'BELOW_AVERAGE';
     return 'POOR';
   }
 

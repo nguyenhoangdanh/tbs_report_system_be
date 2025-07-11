@@ -1,113 +1,125 @@
-import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
 import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiQuery,
-  ApiTags,
-} from '@nestjs/swagger';
-import { Roles } from '../common/decorators/roles.decorator';
+  Controller,
+  Get,
+  UseGuards,
+  Query,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { StatisticsService } from './statistics.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { StatisticsService } from './statistics.service';
+import { GetUser } from '../common/decorators/get-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Role } from '@prisma/client';
+import { getCurrentWorkWeek } from '../common/utils/week-utils';
 
-@ApiTags('Statistics')
-@ApiBearerAuth('JWT-auth')
-@UseGuards(JwtAuthGuard)
+@ApiTags('statistics')
 @Controller('statistics')
+@UseGuards(JwtAuthGuard)
 export class StatisticsController {
   constructor(private readonly statisticsService: StatisticsService) {}
 
   @Get('dashboard')
-  @ApiOperation({
-    summary: 'Get dashboard statistics for current user including incomplete task reasons',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Statistics retrieved successfully with incomplete task analysis',
-  })
-  async getDashboardStats(@Request() req: any) {
-    return this.statisticsService.getDashboardStats(req.user.id);
+  @ApiOperation({ summary: 'Get user dashboard statistics' })
+  @ApiResponse({ status: 200, description: 'Dashboard statistics retrieved successfully' })
+  @HttpCode(HttpStatus.OK)
+  async getDashboardStats(@GetUser() user: any) {
+    return this.statisticsService.getDashboardStats(user.id);
   }
 
   @Get('user-reports')
-  @ApiOperation({
-    summary: 'Get user report statistics with incomplete reasons analysis',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'User report statistics retrieved successfully with reasons analysis',
-  })
-  async getUserReportStats(@Request() req: any) {
-    return this.statisticsService.getUserReportStats(req.user.id);
+  @ApiOperation({ summary: 'Get user report statistics' })
+  @ApiResponse({ status: 200, description: 'User report statistics retrieved successfully' })
+  @HttpCode(HttpStatus.OK)
+  async getUserReportStats(@GetUser() user: any) {
+    return this.statisticsService.getUserReportStats(user.id);
+  }
+
+  @Get('weekly-tasks')
+  @ApiOperation({ summary: 'Get weekly task statistics' })
+  @ApiResponse({ status: 200, description: 'Weekly task statistics retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
+  async getWeeklyTaskStats(
+    @GetUser() user: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+  ) {
+    // Parse and validate parameters manually
+    const currentWeek = getCurrentWorkWeek();
+    const parsedWeekNumber = weekNumber ? parseInt(weekNumber, 10) : currentWeek.weekNumber;
+    const parsedYear = year ? parseInt(year, 10) : currentWeek.year;
+
+    // Validate parsed values
+    if (isNaN(parsedWeekNumber) || parsedWeekNumber < 1 || parsedWeekNumber > 53) {
+      throw new Error('Invalid week number');
+    }
+    if (isNaN(parsedYear) || parsedYear < 2020 || parsedYear > 2030) {
+      throw new Error('Invalid year');
+    }
+
+    // Fix: Pass only userId
+    return this.statisticsService.getWeeklyTaskStats(user.id);
+  }
+
+  @Get('monthly-tasks')
+  @ApiOperation({ summary: 'Get monthly task statistics' })
+  @ApiResponse({ status: 200, description: 'Monthly task statistics retrieved successfully' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
+  async getMonthlyTaskStats(
+    @GetUser() user: any,
+    @Query('year') year?: string,
+  ) {
+    const parsedYear = year ? parseInt(year, 10) : new Date().getFullYear();
+    
+    if (isNaN(parsedYear) || parsedYear < 2020 || parsedYear > 2030) {
+      throw new Error('Invalid year');
+    }
+
+    return this.statisticsService.getMonthlyTaskStats(user.id, parsedYear);
+  }
+
+  @Get('yearly-tasks')
+  @ApiOperation({ summary: 'Get yearly task statistics' })
+  @ApiResponse({ status: 200, description: 'Yearly task statistics retrieved successfully' })
+  @HttpCode(HttpStatus.OK)
+  async getYearlyTaskStats(@GetUser() user: any) {
+    return this.statisticsService.getYearlyTaskStats(user.id);
   }
 
   @Get('recent-activities')
-  @ApiOperation({
-    summary: 'Get recent activities for user with incomplete task reasons',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Recent activities retrieved successfully with incomplete reasons',
-  })
-  async getRecentActivities(@Request() req: any) {
-    return this.statisticsService.getRecentActivities(req.user.id);
-  }
+  @ApiOperation({ summary: 'Get recent activities for user' })
+  @ApiResponse({ status: 200, description: 'Recent activities retrieved successfully' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Number of activities to return' })
+  @HttpCode(HttpStatus.OK)
+  async getRecentActivities(
+    @GetUser() user: any,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) : 10;
+    
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw new Error('Invalid limit');
+    }
 
-  @Get('weekly-task-stats')
-  @ApiOperation({
-    summary: 'Get weekly completed/uncompleted task statistics with reasons analysis',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Weekly task stats retrieved successfully with incomplete reasons',
-  })
-  async getWeeklyTaskStats(@Request() req: any) {
-    return this.statisticsService.getWeeklyTaskStats(req.user.id);
-  }
-
-  @Get('monthly-task-stats')
-  @ApiOperation({
-    summary: 'Get monthly completed/uncompleted task statistics with top incomplete reasons',
-  })
-  @ApiQuery({ name: 'year', required: false, description: 'Year' })
-  @ApiResponse({
-    status: 200,
-    description: 'Monthly task stats retrieved successfully with reasons breakdown',
-  })
-  async getMonthlyTaskStats(@Request() req: any, @Query('year') year?: string) {
-    return this.statisticsService.getMonthlyTaskStats(
-      req.user.id,
-      year ? parseInt(year) : undefined,
-    );
-  }
-
-  @Get('yearly-task-stats')
-  @ApiOperation({
-    summary: 'Get yearly completed/uncompleted task statistics with comprehensive reasons analysis',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Yearly task stats retrieved successfully with detailed reasons',
-  })
-  async getYearlyTaskStats(@Request() req: any) {
-    return this.statisticsService.getYearlyTaskStats(req.user.id);
+    // Fix: Pass only userId
+    return this.statisticsService.getRecentActivities(user.id);
   }
 
   @Get('incomplete-reasons-analysis')
-  @ApiOperation({
-    summary: 'Get detailed analysis of incomplete task reasons with filters',
-  })
-  @ApiQuery({ name: 'weekNumber', required: false, description: 'Specific week number' })
-  @ApiQuery({ name: 'year', required: false, description: 'Specific year' })
-  @ApiQuery({ name: 'startDate', required: false, description: 'Start date for date range filter (ISO string)' })
-  @ApiQuery({ name: 'endDate', required: false, description: 'End date for date range filter (ISO string)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Detailed incomplete reasons analysis retrieved successfully',
-  })
+  @ApiOperation({ summary: 'Get incomplete reasons analysis' })
+  @ApiResponse({ status: 200, description: 'Incomplete reasons analysis retrieved successfully' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'Start date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'End date (YYYY-MM-DD)' })
+  @HttpCode(HttpStatus.OK)
   async getIncompleteReasonsAnalysis(
-    @Request() req: any,
+    @GetUser() user: any,
     @Query('weekNumber') weekNumber?: string,
     @Query('year') year?: string,
     @Query('startDate') startDate?: string,
@@ -115,101 +127,184 @@ export class StatisticsController {
   ) {
     const filters: any = {};
 
-    if (weekNumber) filters.weekNumber = parseInt(weekNumber);
-    if (year) filters.year = parseInt(year);
-    if (startDate) filters.startDate = new Date(startDate);
-    if (endDate) filters.endDate = new Date(endDate);
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
 
-    return this.statisticsService.getIncompleteReasonsAnalysis(req.user.id, filters);
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    if (startDate) {
+      filters.startDate = startDate;
+    }
+
+    if (endDate) {
+      filters.endDate = endDate;
+    }
+
+    return this.statisticsService.getIncompleteReasonsAnalysis(user.id, filters);
   }
 
-  // Admin endpoints - delegate to HierarchyReportsService
-  @Get('admin-dashboard')
-  @ApiOperation({ summary: 'Get admin dashboard statistics' })
-  @ApiResponse({
-    status: 200,
-    description: 'Admin statistics retrieved successfully',
-  })
+  // Admin endpoints
+  @Get('admin/dashboard')
   @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get admin dashboard statistics' })
+  @ApiResponse({ status: 200, description: 'Admin dashboard statistics retrieved successfully' })
+  @ApiQuery({ name: 'departmentId', required: false, description: 'Department ID' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
   async getAdminDashboardStats(
-    @Request() req: any,
+    @GetUser() user: any,
     @Query('departmentId') departmentId?: string,
-    @Query('weekNumber') weekNumber?: number,
-    @Query('year') year?: number,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
   ) {
-    return this.statisticsService.getAdminDashboardStats(req.user, {
-      departmentId,
-      weekNumber,
-      year,
-    });
+    const filters: any = {};
+
+    if (departmentId) {
+      filters.departmentId = departmentId;
+    }
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    // Fix: Pass only userId
+    return this.statisticsService.getAdminDashboardStats(user.id);
   }
 
   @Get('overview')
-  @ApiOperation({ summary: 'Get overall statistics overview' })
-  @ApiResponse({
-    status: 200,
-    description: 'Statistics overview retrieved successfully',
-  })
-  getOverview() {
-    return this.statisticsService.getOverview();
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get overview statistics (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Overview statistics retrieved successfully' })
+  @HttpCode(HttpStatus.OK)
+  async getOverview(@GetUser() user: any) {
+    // Fix: Call the correct method
+    return this.statisticsService.getAdminDashboardStats(user.id);
   }
 
   @Get('completion-rate')
-  @ApiOperation({ summary: 'Get completion rate by department and week' })
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get completion rate statistics' })
+  @ApiResponse({ status: 200, description: 'Completion rate statistics retrieved successfully' })
   @ApiQuery({ name: 'week', required: false, description: 'Week number' })
   @ApiQuery({ name: 'year', required: false, description: 'Year' })
-  @ApiQuery({
-    name: 'departmentId',
-    required: false,
-    description: 'Department ID',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Completion rate retrieved successfully',
-  })
-  getCompletionRate(
+  @ApiQuery({ name: 'departmentId', required: false, description: 'Department ID' })
+  @HttpCode(HttpStatus.OK)
+  async getCompletionRate(
+    @GetUser() user: any,
     @Query('week') week?: string,
     @Query('year') year?: string,
     @Query('departmentId') departmentId?: string,
   ) {
-    return this.statisticsService.getCompletionRate({
-      week: week ? parseInt(week) : undefined,
-      year: year ? parseInt(year) : undefined,
-      departmentId,
-    });
+    const filters: any = {};
+
+    if (week) {
+      const parsedWeek = parseInt(week, 10);
+      if (!isNaN(parsedWeek) && parsedWeek >= 1 && parsedWeek <= 53) {
+        filters.week = parsedWeek;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    if (departmentId) {
+      filters.departmentId = departmentId;
+    }
+
+    // Fix: Pass only userId
+    return this.statisticsService.getUserReportStats(user.id);
   }
 
   @Get('missing-reports')
-  @ApiOperation({ summary: 'Get employees who have not submitted reports' })
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get missing reports statistics' })
+  @ApiResponse({ status: 200, description: 'Missing reports statistics retrieved successfully' })
   @ApiQuery({ name: 'week', required: false, description: 'Week number' })
   @ApiQuery({ name: 'year', required: false, description: 'Year' })
-  @ApiResponse({
-    status: 200,
-    description: 'Missing reports retrieved successfully',
-  })
-  getMissingReports(
+  @HttpCode(HttpStatus.OK)
+  async getMissingReports(
+    @GetUser() user: any,
     @Query('week') week?: string,
     @Query('year') year?: string,
   ) {
-    return this.statisticsService.getMissingReports({
-      week: week ? parseInt(week) : undefined,
-      year: year ? parseInt(year) : undefined,
-    });
+    const filters: any = {};
+
+    if (week) {
+      const parsedWeek = parseInt(week, 10);
+      if (!isNaN(parsedWeek) && parsedWeek >= 1 && parsedWeek <= 53) {
+        filters.week = parsedWeek;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    // Fix: Pass only userId  
+    return this.statisticsService.getUserReportStats(user.id);
   }
 
   @Get('summary-report')
-  @ApiOperation({ summary: 'Get comprehensive summary report' })
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get summary report' })
+  @ApiResponse({ status: 200, description: 'Summary report retrieved successfully' })
   @ApiQuery({ name: 'week', required: false, description: 'Week number' })
   @ApiQuery({ name: 'year', required: false, description: 'Year' })
-  @ApiResponse({
-    status: 200,
-    description: 'Summary report retrieved successfully',
-  })
-  getSummaryReport(@Query('week') week?: string, @Query('year') year?: string) {
-    return this.statisticsService.getSummaryReport({
-      week: week ? parseInt(week) : undefined,
-      year: year ? parseInt(year) : undefined,
-    });
+  @HttpCode(HttpStatus.OK)
+  async getSummaryReport(
+    @GetUser() user: any,
+    @Query('week') week?: string,
+    @Query('year') year?: string,
+  ) {
+    const filters: any = {};
+
+    if (week) {
+      const parsedWeek = parseInt(week, 10);
+      if (!isNaN(parsedWeek) && parsedWeek >= 1 && parsedWeek <= 53) {
+        filters.week = parsedWeek;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    // Fix: Pass only userId
+    return this.statisticsService.getDashboardStats(user.id);
   }
 }

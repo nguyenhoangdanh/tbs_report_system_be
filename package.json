@@ -18,15 +18,12 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    
     "db:generate": "prisma generate",
-    
     "local:setup": "./scripts/setup-database.sh local",
     "local:studio": "./scripts/studio.sh local",
     "local:reset": "docker compose down -v && ./scripts/setup-database.sh local",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    
     "setup": "./scripts/setup-complete.sh",
     "deploy:prod": "./scripts/deploy.sh",
     "deploy:single": "./scripts/deploy-single.sh",
@@ -34,14 +31,11 @@
     "fix-single": "./scripts/fix-deploy.sh",
     "db:setup": "./scripts/setup-database.sh",
     "studio": "./scripts/studio.sh",
-    
     "logs": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl logs",
     "status": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl status",
     "restart": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl apps restart weekly-report-backend",
-    
     "scale:512": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl scale memory 512 --yes",
     "scale:1024": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl scale memory 1024 --yes",
-    
     "test:health": "curl -f https://weekly-report-backend.fly.dev/health",
     "test:api": "curl -f https://weekly-report-backend.fly.dev/api/health",
     "test:db": "curl -f https://weekly-report-backend.fly.dev/api/health/db",
@@ -50,7 +44,6 @@
     "test:login-methods": "./scripts/test-login-methods.sh",
     "test:email-generation": "node scripts/test-email-generation.js",
     "test:email-samples": "echo '🧪 Testing email generation:' && echo 'Nguyễn Hoàng Danh -> danhnh@tbsgroup.vn' && echo 'Trần Thị Ngọc Huyền -> huyenttn@tbsgroup.vn'",
-    
     "manual:migrate": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx prisma migrate deploy'",
     "manual:seed": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/seed.ts'",
     "manual:import": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/import-all-data-from-excel.ts'",
@@ -64,10 +57,10 @@
     "local-import": "./scripts/local-import.sh",
     "ensure-24-7": "./scripts/ensure-24-7.sh",
     "db:proxy": "./scripts/db-proxy.sh start",
-    "db:proxy-stop": "./scripts/db-proxy.sh stop", 
+    "db:proxy-stop": "./scripts/db-proxy.sh stop",
     "db:proxy-check": "./scripts/db-proxy.sh check",
     "db:vscode-setup": "./scripts/vscode-db-setup.sh",
-    "db:reset": "./scripts/reset-database.sh",
+    "db:reset": "npx prisma migrate reset --force",
     "db:reset-local": "./scripts/reset-database.sh local",
     "db:reset-production": "./scripts/reset-database.sh production",
     "db:reset-simple": "./scripts/simple-reset.sh",
@@ -98,6 +91,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "cookie-parser": "^1.4.7",
+    "date-fns": "^4.1.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",

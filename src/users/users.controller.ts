@@ -17,7 +17,7 @@ import { GetUser } from '../common/decorators/get-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
-import { getCurrentWeek } from '../common/utils/week-utils';
+import { getCurrentWorkWeek } from '../common/utils/week-utils';
 
 @ApiTags('users')
 @Controller('users')
@@ -91,7 +91,7 @@ export class UsersController {
 
   @Get('with-ranking')
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN, Role.OFFICE_MANAGER)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Get users with ranking data' })
   @ApiQuery({
     name: 'weekNumber',
@@ -112,7 +112,7 @@ export class UsersController {
     const filters: any = {};
 
     if (weekNumber || year || periodWeeks) {
-      const { weekNumber: currentWeek, year: currentYear } = getCurrentWeek();
+      const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
       const targetWeek = parseInt(weekNumber) || currentWeek;
       const targetYear = parseInt(year) || currentYear;
       const weeks = parseInt(periodWeeks) || 4;

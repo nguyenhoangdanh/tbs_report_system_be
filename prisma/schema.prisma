@@ -1,3 +1,6 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["relationJoins"]
@@ -17,29 +20,33 @@ model JobPosition {
   description  String?
   positionId   String
   departmentId String
+  officeId     String     // Denormalized for easier queries
   isActive     Boolean    @default(true)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   position     Position   @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  office       Office     @relation(fields: [officeId], references: [id], onDelete: Cascade)
   users        User[]
 
   @@unique([positionId, jobName, departmentId])
   @@index([departmentId])
   @@index([positionId])
   @@index([isActive])
+  @@index([officeId])
   @@map("job_positions")
 }
 
 model Office {
-  id          String       @id @default(uuid())
-  name        String       @unique
-  type        OfficeType
-  description String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  departments Department[]
-  users       User[]
+  id           String        @id @default(uuid())
+  name         String        @unique
+  type         OfficeType
+  description  String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  departments  Department[]
+  users        User[]
+  jobPositions JobPosition[]
 
   @@index([type])
   @@map("offices")
@@ -64,6 +71,11 @@ model Position {
   id           String        @id @default(uuid())
   name         String        @unique
   description  String?
+  level        Int           @default(0) // 0=CEO, 1=Deputy, 2=Manager, 3=Leader, 4=Staff
+  priority     Int           @default(0) // Sort priority within same level
+  isManagement Boolean       @default(false) // Is this a management position?
+  isReportable Boolean       @default(true) // Should submit reports? (CEO = false)
+  canViewHierarchy Boolean   @default(false) // Can view hierarchy reports? (Staff = false)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   jobPositions JobPosition[]
@@ -72,19 +84,19 @@ model Position {
 }
 
 model User {
-  id            String      @id @default(uuid())
-  employeeCode  String      @unique
-  email         String?     @unique
+  id            String    @id @default(uuid())
+  employeeCode  String    @unique
+  email         String?   @unique
   password      String
   firstName     String
   lastName      String
-  phone         String      @unique
-  role          Role        @default(USER)
+  phone         String?   @unique
+  role          Role      @default(USER)
   jobPositionId String
-  isActive      Boolean     @default(true)
-  officeId      String
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  isActive      Boolean   @default(true)
+  officeId      String    // Denormalized for easier queries
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   reports       Report[]
   jobPosition   JobPosition @relation(fields: [jobPositionId], references: [id])
   office        Office      @relation(fields: [officeId], references: [id])
@@ -128,7 +140,6 @@ model ReportTask {
   thursday      Boolean  @default(false)
   friday        Boolean  @default(false)
   saturday      Boolean  @default(false)
-  sunday        Boolean  @default(false)
   isCompleted   Boolean  @default(false)
   reasonNotDone String?
   createdAt     DateTime @default(now())
@@ -142,8 +153,6 @@ model ReportTask {
 
 enum Role {
   SUPERADMIN
-  OFFICE_MANAGER
-  OFFICE_ADMIN
   ADMIN
   USER
 }

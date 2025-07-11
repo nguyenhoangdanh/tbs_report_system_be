@@ -19,6 +19,10 @@ export class CreateJobPositionDto {
   @IsUUID()
   departmentId: string;
 
+  @ApiProperty({ description: 'Office ID' })
+  @IsUUID()
+  officeId: string;
+
   @ApiProperty({ description: 'Is active', default: true, required: false })
   @IsOptional()
   @IsBoolean()
