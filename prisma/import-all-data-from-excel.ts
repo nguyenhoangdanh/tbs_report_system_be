@@ -134,93 +134,68 @@ function determineRole(cd: string, vt: string, pb: string): Role {
 function getPositionProperties(positionName: string): { isManagement: boolean; canViewHierarchy: boolean; level: number } {
   const pos = positionName.toLowerCase().trim();
   
-  // Phân loại dựa trên TÊN CHỨC DANH thực tế, không dựa trên level số
-  
-  // Cấp 0: CEO/TGĐ - Cấp cao nhất
-  if (pos === 'tgđ' || pos === 'tổng giám đốc' || pos === 'ceo' || 
-      pos.includes('tổng giám đốc') || pos.includes('ceo')) {
+  // Dựa vào database thực tế - có 10 levels từ 1-10
+
+  //LEVEL 0: TGĐ (Tổng Giám Đốc) - Cấp cao nhất trong công TG
+  if (pos === 'tgđ' || pos === 'tổng giám đốc' || pos.includes('tổng giám đốc')) {
     return { isManagement: true, canViewHierarchy: true, level: 0 };
   }
   
-  // Cấp 1: Giám đốc các đơn vị
+  // Level 1: GĐ (Giám Đốc) - Cấp cao nhất trong công ty
   if (pos === 'gđ' || pos === 'giám đốc' || 
       pos.includes('giám đốc') && !pos.includes('phó') && !pos.includes('tổng')) {
     return { isManagement: true, canViewHierarchy: true, level: 1 };
   }
   
-  // Cấp 2: Phó giám đốc
+  // Level 2: PGĐ (Phó Giám Đốc)
   if (pos === 'pgđ' || pos === 'phó giám đốc' || 
       pos.includes('phó giám đốc') || pos.includes('phó gđ')) {
     return { isManagement: true, canViewHierarchy: true, level: 2 };
   }
   
-  // Cấp 3: Trưởng phòng/ban/bộ phận
-  if (pos === 'tp' || pos === 'trưởng phòng' || pos === 'trưởng ban' ||
-      pos.includes('trưởng phòng') || pos.includes('trưởng ban') || 
-      pos.includes('trưởng bộ phận') || pos.includes('trưởng khối')) {
+  // Level 3: TP (Trưởng Phòng)
+  if (pos === 'tp' || pos === 'trưởng phòng' || 
+      pos.includes('trưởng phòng') || pos.includes('trưởng ban')) {
     return { isManagement: true, canViewHierarchy: true, level: 3 };
   }
   
-  // Cấp 4: Phó trưởng phòng, Trưởng nhóm/Team/Đội
-  if (pos === 'ptp' || pos === 'phó trưởng phòng' || pos === 'trưởng nhóm' ||
-      pos === 't.team' || pos === 'trưởng team' || pos === 'team leader' ||
-      pos === 'đt' || pos === 'đội trưởng' || pos === 'trưởng đội' ||
-      pos.includes('phó trưởng phòng') || pos.includes('trưởng nhóm') ||
-      pos.includes('trưởng team') || pos.includes('đội trưởng') ||
-      pos.includes('team leader') || pos.includes('group leader')) {
+  // Level 4: T.TEAM (Trưởng Team)
+  if (pos === 't.team' || pos === 'trưởng team' || pos === 'team leader' ||
+      pos.includes('trưởng team') || pos.includes('team leader') ||
+      pos.includes('trưởng nhóm') || pos.includes('group leader')) {
     return { isManagement: true, canViewHierarchy: true, level: 4 };
   }
-  
-  // Cấp 5: Tổ trưởng, Trưởng ca, Line Leader
-  if (pos === 'tt' || pos === 'tổ trưởng' || pos === 'trưởng tổ' ||
-      pos === 'tca' || pos === 'trưởng ca' || pos === 'ca trưởng' ||
-      pos === 't.line' || pos === 'trưởng line' || pos === 'line leader' ||
-      pos.includes('tổ trưởng') || pos.includes('trưởng tổ') ||
-      pos.includes('trưởng ca') || pos.includes('ca trưởng') ||
+
+  // Level 5: TL (Trợ Lý)
+  if (pos === 'tl' || pos === 'trợ lý' || pos.includes('trợ lý')) {
+    return { isManagement: false, canViewHierarchy: false, level: 5 };
+  }
+
+  // Level 6: T.LINE (Trưởng Line)
+  if (pos === 't.line' || pos === 'trưởng line' || pos === 'line leader' ||
       pos.includes('trưởng line') || pos.includes('line leader')) {
-    return { isManagement: true, canViewHierarchy: true, level: 5 };
+    return { isManagement: true, canViewHierarchy: true, level: 6 };
   }
   
-  // Cấp 6: Chuyên viên cao cấp, Trợ lý cấp cao - Có quyền xem nhưng không phải quản lý
-  if (pos.includes('chuyên viên chính') || pos.includes('chuyên viên cao cấp') ||
-      pos.includes('chuyên viên senior') || pos.includes('senior') ||
-      pos === 'tl' || pos === 'trợ lý' || pos.includes('trợ lý') ||
-      pos.includes('phụ trách') || pos.includes('điều phối viên')) {
-    return { isManagement: false, canViewHierarchy: true, level: 6 };
+  // Level 7: TT (Tổ Trưởng - cấp thấp hơn)
+  if (pos === 'tt' || (pos === 'tổ trưởng' && !pos.includes('phó'))) {
+    return { isManagement: true, canViewHierarchy: true, level: 7 };
   }
   
-  // Cấp 7: Chuyên viên, Nhân viên văn phòng thường
-  if (pos === 'cv' || pos === 'chuyên viên' || pos === 'nv' || pos === 'nhân viên' ||
-      pos.includes('chuyên viên') || pos.includes('nhân viên') ||
-      pos.includes('cán bộ') || pos.includes('thư ký') ||
-      pos.includes('kế toán') && !pos.includes('trưởng') ||
-      pos.includes('kỹ thuật') && !pos.includes('trưởng')) {
-    return { isManagement: false, canViewHierarchy: false, level: 7 };
+  // Level 8: ĐT (Đội Trưởng)
+  if (pos === 'đt' || pos === 'đội trưởng' || pos === 'trưởng đội' ||
+      pos.includes('đội trưởng') || pos.includes('trưởng đội')) {
+    return { isManagement: true, canViewHierarchy: true, level: 8 };
   }
   
-  // Cấp 8: Công nhân, Lao động phổ thông
-  if (pos === 'cn' || pos === 'công nhân' || pos === 'cnkt' || pos === 'lao động' ||
-      pos.includes('công nhân') || pos.includes('thợ') || pos.includes('lao động') ||
-      pos.includes('tác nghiệp') || pos.includes('vận hành') ||
-      pos.includes('may') || pos.includes('cắt') || pos.includes('dán') ||
-      pos.includes('kiểm tra') || pos.includes('đóng gói') ||
-      pos.includes('bảo vệ') || pos.includes('lái xe') || pos.includes('tạp vụ')) {
-    return { isManagement: false, canViewHierarchy: false, level: 8 };
+  // Level 9: TCA (Trưởng Ca)
+  if (pos === 'tca' || pos === 'trưởng ca' || 
+      pos.includes('trưởng ca') && !pos.includes('đội')) {
+    return { isManagement: true, canViewHierarchy: true, level: 9 };
   }
   
-  // Default: Phân tích thêm dựa trên từ khóa
-  // Nếu có từ "trưởng" => có thể là quản lý
-  if (pos.includes('trưởng')) {
-    return { isManagement: true, canViewHierarchy: true, level: 5 };
-  }
-  
-  // Nếu có từ "phó" => có thể là phó
-  if (pos.includes('phó')) {
-    return { isManagement: true, canViewHierarchy: true, level: 4 };
-  }
-  
-  // Default: Nhân viên thường
-  return { isManagement: false, canViewHierarchy: false, level: 8 };
+  // Default: Nhân viên cấp 10
+  return { isManagement: false, canViewHierarchy: false, level: 10 };
 }
 
 // Function to generate proper email

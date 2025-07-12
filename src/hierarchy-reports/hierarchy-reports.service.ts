@@ -124,13 +124,11 @@ export class HierarchyReportsService {
       ]
     });
 
-    console.log(`Found ${positions.length} management positions (chức vụ quản lý)`);
 
     const positionStats = positions.map(position => {
       const allUsers = position.jobPositions.flatMap(jp => jp.users);
       const stats = this.calculatePositionStats(allUsers, weekNumber, year);
       
-      console.log(`Management Position ${position.name} (level ${position.level}): ${allUsers.length} users, completion rate: ${stats.averageCompletionRate}%`);
       
       return {
         position: {
@@ -148,7 +146,6 @@ export class HierarchyReportsService {
     });
 
     const summary = this.calculateManagementSummary(positionStats);
-    console.log('Management Summary:', JSON.stringify(summary, null, 2));
 
     return {
       weekNumber,
@@ -238,12 +235,10 @@ export class HierarchyReportsService {
       ]
     });
 
-    console.log(`Found ${jobPositions.length} job positions (vị trí công việc)`);
 
     const jobPositionStats = jobPositions.map(jobPosition => {
       const stats = this.calculateJobPositionStats(jobPosition.users, weekNumber, year);
       
-      console.log(`JobPosition ${jobPosition.jobName}: ${jobPosition.users.length} users, completion rate: ${stats.averageCompletionRate}%`);
       
       return {
         jobPosition: {
@@ -261,7 +256,6 @@ export class HierarchyReportsService {
     });
 
     const summary = this.calculateStaffSummary(jobPositionStats);
-    console.log('Staff Summary:', JSON.stringify(summary, null, 2));
 
     return {
       weekNumber,
@@ -363,7 +357,6 @@ export class HierarchyReportsService {
   async getMyHierarchyView(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
     const { weekNumber, year } = this.getWeekFilters(filters);
 
-    console.log(`Getting hierarchy view for user ${userId}, role ${userRole}, week ${weekNumber}/${year}`);
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -382,7 +375,6 @@ export class HierarchyReportsService {
       throw new NotFoundException('User not found');
     }
 
-    console.log(`User position: ${user.jobPosition?.position?.name}, canViewHierarchy: ${user.jobPosition?.position?.canViewHierarchy}, isManagement: ${user.jobPosition?.position?.isManagement}, level: ${user.jobPosition?.position?.level}, role: ${userRole}`);
 
     // Xác định quyền xem dựa trên role và position
     const isAdminRole = userRole === Role.SUPERADMIN || userRole === Role.ADMIN;
@@ -441,42 +433,33 @@ export class HierarchyReportsService {
       })
     ]);
 
-    console.log(`Management positions: ${managementPositionCount}, Job positions: ${jobPositionCount}`);
 
     // Logic quyết định view type
     if (isAdminRole) {
       if (managementPositionCount > 0 && jobPositionCount > 0) {
-        console.log('Using Mixed Hierarchy View (Admin - both available)');
         return this.getMixedHierarchyView(userId, userRole, weekNumber, year, filters);
       } else if (managementPositionCount > 0) {
-        console.log('Using Management Hierarchy View (Admin - management only)');
         return this.getManagementHierarchyView(userId, userRole, weekNumber, year, filters);
       } else if (jobPositionCount > 0) {
-        console.log('Using Staff Hierarchy View (Admin - staff only)');
         return this.getStaffHierarchyView(userId, userRole, weekNumber, year, filters);
       }
     } else if (userRole === Role.USER) {
       if (userCanViewHierarchy) {
         if (managementPositionCount > 0 && jobPositionCount > 0) {
-          console.log('Using Mixed Hierarchy View (Management User - both available)');
           return this.getMixedHierarchyView(userId, userRole, weekNumber, year, filters);
         } else if (managementPositionCount > 0) {
-          console.log('Using Management Hierarchy View (Management User)');
           return this.getManagementHierarchyView(userId, userRole, weekNumber, year, filters);
         } else if (jobPositionCount > 0) {
-          console.log('Using Staff Hierarchy View (Management User)');
           return this.getStaffHierarchyView(userId, userRole, weekNumber, year, filters);
         }
       } else {
         if (jobPositionCount > 0) {
-          console.log('Using Staff Hierarchy View (Regular User)');
           return this.getStaffHierarchyView(userId, userRole, weekNumber, year, filters);
         }
       }
     }
 
     // Return empty response if no accessible data
-    console.log('No hierarchy data available for user');
     return this.getEmptyHierarchyResponse(weekNumber, year);
   }
 
