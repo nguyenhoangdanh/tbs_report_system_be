@@ -61,12 +61,6 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResponseDto> {
     try {
-      console.log('Login request received:', {
-        employeeCode: loginDto.employeeCode,
-        hasPassword: !!loginDto.password,
-        rememberMe: loginDto.rememberMe || false,
-      });
-
       return await this.authService.login(loginDto, response, loginDto.rememberMe || false);
     } catch (error) {
       console.error('Login controller error:', error);

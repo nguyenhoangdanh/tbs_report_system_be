@@ -365,8 +365,8 @@ export class UsersService {
     if (completionRate >= 100) return 'EXCELLENT';
     if (completionRate >= 95) return 'GOOD';
     if (completionRate >= 90) return 'AVERAGE';
-    if (completionRate >= 85) return 'BELOW_AVERAGE';
-    return 'POOR';
+    if (completionRate >= 85) return 'POOR';
+    return 'FAIL';
   }
 
   private getRankingLabel(ranking: string): string {
@@ -374,8 +374,8 @@ export class UsersService {
       'EXCELLENT': 'Xuất sắc',
       'GOOD': 'Tốt',
       'AVERAGE': 'Trung bình',
-      'BELOW_AVERAGE': 'Dưới trung bình',
-      'POOR': 'Kém'
+      'POOR': 'Yếu',
+      'FAIL': 'Kém'
     };
     return labels[ranking] || 'Chưa xếp loại';
   }

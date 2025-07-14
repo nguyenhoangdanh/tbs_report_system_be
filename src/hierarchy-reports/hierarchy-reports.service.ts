@@ -610,8 +610,8 @@ export class HierarchyReportsService {
     if (completionRate >= 100) return 'EXCELLENT';
     if (completionRate >= 95) return 'GOOD';
     if (completionRate >= 90) return 'AVERAGE';
-    if (completionRate >= 85) return 'BELOW_AVERAGE';
-    return 'POOR';
+    if (completionRate >= 85) return 'POOR';
+    return 'FAIL';
   }
 
   private calculateRankingDistribution(completionRates: number[]) {
@@ -619,8 +619,8 @@ export class HierarchyReportsService {
       excellent: 0,
       good: 0,
       average: 0,
-      belowAverage: 0,
-      poor: 0
+      poor: 0,
+      fail: 0
     };
 
     completionRates.forEach(rate => {
@@ -635,11 +635,11 @@ export class HierarchyReportsService {
         case 'AVERAGE':
           distribution.average++;
           break;
-        case 'BELOW_AVERAGE':
-          distribution.belowAverage++;
-          break;
         case 'POOR':
           distribution.poor++;
+          break;
+        case 'FAIL':
+          distribution.fail++;
           break;
       }
     });
@@ -649,8 +649,8 @@ export class HierarchyReportsService {
       excellent: { count: distribution.excellent, percentage: total > 0 ? Math.round((distribution.excellent / total) * 100) : 0 },
       good: { count: distribution.good, percentage: total > 0 ? Math.round((distribution.good / total) * 100) : 0 },
       average: { count: distribution.average, percentage: total > 0 ? Math.round((distribution.average / total) * 100) : 0 },
-      belowAverage: { count: distribution.belowAverage, percentage: total > 0 ? Math.round((distribution.belowAverage / total) * 100) : 0 },
-      poor: { count: distribution.poor, percentage: total > 0 ? Math.round((distribution.poor / total) * 100) : 0 }
+      poor: { count: distribution.poor, percentage: total > 0 ? Math.round((distribution.poor / total) * 100) : 0 },
+      fail: { count: distribution.fail, percentage: total > 0 ? Math.round((distribution.fail / total) * 100) : 0 }
     };
   }
 
@@ -1741,6 +1741,123 @@ export class HierarchyReportsService {
         poor: { count: 0, percentage: 0 },
         fail: { count: 0, percentage: 0 }
       }
+    };
+  }
+
+  /**
+   * Get specific report details for admin view
+   */
+  async getReportDetailsForAdmin(userId: string, reportId: string, currentUser: any) {
+    // Verify the target user exists
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            department: { include: { office: true } },
+            position: true,
+          },
+        },
+      },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Check permissions - admin can only view reports from their office
+    // if (currentUser.role === Role.ADMIN && targetUser.officeId !== currentUser.officeId) {
+    //   throw new ForbiddenException('You can only view reports from your office');
+    // }
+
+    // Get the specific report
+    const report = await this.prisma.report.findFirst({
+      where: {
+        id: reportId,
+        userId: userId,
+      },
+      include: {
+        tasks: {
+          orderBy: { createdAt: 'asc' },
+        },
+        user: {
+          include: {
+            office: true,
+            jobPosition: {
+              include: {
+                department: { include: { office: true } },
+                position: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!report) {
+      throw new NotFoundException('Report not found');
+    }
+
+    // Calculate report statistics
+    const stats = this.calculateReportStatistics(report);
+
+    return {
+      report,
+      user: targetUser,
+      stats,
+    };
+  }
+
+  /**
+   * Calculate detailed statistics for a report
+   */
+  private calculateReportStatistics(report: any) {
+    const tasks = report.tasks || [];
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter((task: any) => task.isCompleted).length;
+    const incompleteTasks = totalTasks - completedTasks;
+    const taskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+    // Calculate tasks by day
+    const tasksByDay = {
+      monday: tasks.filter((task: any) => task.monday).length,
+      tuesday: tasks.filter((task: any) => task.tuesday).length,
+      wednesday: tasks.filter((task: any) => task.wednesday).length,
+      thursday: tasks.filter((task: any) => task.thursday).length,
+      friday: tasks.filter((task: any) => task.friday).length,
+      saturday: tasks.filter((task: any) => task.saturday).length,
+    };
+
+    // Group incomplete reasons
+    const incompleteReasons = [];
+    const reasonGroups = new Map();
+
+    tasks
+      .filter((task: any) => !task.isCompleted && task.reasonNotDone)
+      .forEach((task: any) => {
+        const reason = task.reasonNotDone.trim();
+        if (!reasonGroups.has(reason)) {
+          reasonGroups.set(reason, {
+            reason,
+            count: 0,
+            tasks: [],
+          });
+        }
+        const group = reasonGroups.get(reason);
+        group.count++;
+        group.tasks.push(task.taskName);
+      });
+
+    incompleteReasons.push(...reasonGroups.values());
+
+    return {
+      totalTasks,
+      completedTasks,
+      incompleteTasks,
+      taskCompletionRate,
+      tasksByDay,
+      incompleteReasons,
     };
   }
 }

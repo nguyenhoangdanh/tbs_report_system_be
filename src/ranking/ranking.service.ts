@@ -7,8 +7,9 @@ export enum EmployeeRanking {
   EXCELLENT = 'EXCELLENT',       // Xuất sắc (>=100%)
   GOOD = 'GOOD',                 // Tốt (>=95%)
   AVERAGE = 'AVERAGE',           // Trung bình (>=90%)
-  BELOW_AVERAGE = 'BELOW_AVERAGE', // Dưới trung bình (>=85%)
-  POOR = 'POOR'                  // Kém (<85%)
+  POOR = 'POOR',                  // Yếu (>=85%)
+  FAIL = 'FAIL'                  // Kém (<85%)
+
 }
 
 @Injectable()
@@ -22,8 +23,8 @@ export class RankingService {
     if (completionRate >= 100) return EmployeeRanking.EXCELLENT;
     if (completionRate >= 95) return EmployeeRanking.GOOD;
     if (completionRate >= 90) return EmployeeRanking.AVERAGE;
-    if (completionRate >= 85) return EmployeeRanking.BELOW_AVERAGE;
-    return EmployeeRanking.POOR;
+    if (completionRate >= 85) return EmployeeRanking.POOR;
+    return EmployeeRanking.FAIL;
   }
 
   // Get ranking label in Vietnamese
@@ -32,8 +33,8 @@ export class RankingService {
       [EmployeeRanking.EXCELLENT]: 'Xuất sắc',
       [EmployeeRanking.GOOD]: 'Tốt',
       [EmployeeRanking.AVERAGE]: 'Trung bình',
-      [EmployeeRanking.BELOW_AVERAGE]: 'Dưới trung bình',
-      [EmployeeRanking.POOR]: 'Kém'
+      [EmployeeRanking.POOR]: 'Yếu',
+      [EmployeeRanking.FAIL]: 'Kém'
     };
     return labels[ranking];
   }
@@ -1099,8 +1100,8 @@ export class RankingService {
       [EmployeeRanking.EXCELLENT]: 0,
       [EmployeeRanking.GOOD]: 0,
       [EmployeeRanking.AVERAGE]: 0,
-      [EmployeeRanking.BELOW_AVERAGE]: 0,
-      [EmployeeRanking.POOR]: 0
+      [EmployeeRanking.POOR]: 0,
+      [EmployeeRanking.FAIL]: 0
     };
 
     employeeRankings.forEach(emp => {
@@ -1113,8 +1114,8 @@ export class RankingService {
       excellent: { count: counts[EmployeeRanking.EXCELLENT], percentage: this.calculatePercentage(counts[EmployeeRanking.EXCELLENT], total) },
       good: { count: counts[EmployeeRanking.GOOD], percentage: this.calculatePercentage(counts[EmployeeRanking.GOOD], total) },
       average: { count: counts[EmployeeRanking.AVERAGE], percentage: this.calculatePercentage(counts[EmployeeRanking.AVERAGE], total) },
-      belowAverage: { count: counts[EmployeeRanking.BELOW_AVERAGE], percentage: this.calculatePercentage(counts[EmployeeRanking.BELOW_AVERAGE], total) },
-      poor: { count: counts[EmployeeRanking.POOR], percentage: this.calculatePercentage(counts[EmployeeRanking.POOR], total) }
+      poor: { count: counts[EmployeeRanking.POOR], percentage: this.calculatePercentage(counts[EmployeeRanking.POOR], total) },
+      fail: { count: counts[EmployeeRanking.FAIL], percentage: this.calculatePercentage(counts[EmployeeRanking.FAIL], total) }
     };
   }
 
@@ -1131,7 +1132,7 @@ export class RankingService {
         .filter(emp => emp.performance.ranking === EmployeeRanking.EXCELLENT)
         .length,
       needsImprovement: employeeRankings
-        .filter(emp => [EmployeeRanking.BELOW_AVERAGE, EmployeeRanking.POOR].includes(emp.performance.ranking))
+        .filter(emp => [EmployeeRanking.FAIL, EmployeeRanking.POOR].includes(emp.performance.ranking))
         .length
     };
   }
@@ -1189,7 +1190,7 @@ export class RankingService {
 
   private getNeedsImprovement(users: any[], employeeRankings: any[]) {
     return employeeRankings
-      .filter(emp => [EmployeeRanking.BELOW_AVERAGE, EmployeeRanking.POOR].includes(emp.ranking))
+      .filter(emp => [EmployeeRanking.FAIL, EmployeeRanking.POOR].includes(emp.ranking))
       .sort((a, b) => a.completionRate - b.completionRate)
       .slice(0, 10)
       .map(emp => ({

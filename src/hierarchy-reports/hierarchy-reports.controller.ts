@@ -424,4 +424,21 @@ export class HierarchyReportsController {
 
     return this.hierarchyReportsService.getIncompleteReasonsHierarchy(user.id, user.role, filters);
   }
+
+  /**
+   * Get specific report details for admin view
+   */
+  @Get('user/:userId/report/:reportId')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiOperation({ summary: 'Get specific report details for admin view' })
+  @ApiParam({ name: 'userId', description: 'User ID' })
+  @ApiParam({ name: 'reportId', description: 'Report ID' })
+  async getReportDetailsForAdmin(
+    @Param('userId') userId: string,
+    @Param('reportId') reportId: string,
+    @GetUser() currentUser: any,
+  ) {
+    return this.hierarchyReportsService.getReportDetailsForAdmin(userId, reportId, currentUser);
+  }
 }
