@@ -14,7 +14,6 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { getCurrentWorkWeek } from '../common/utils/week-utils';
 
 @ApiTags('hierarchy-reports')
 @Controller('hierarchy-reports')
@@ -58,8 +57,6 @@ export class HierarchyReportsController {
       }
     }
 
-    console.log(`API Request - User: ${user.id}, Role: ${user.role}, Filters:`, filters);
-    
     const result = await this.hierarchyReportsService.getMyHierarchyView(user.id, user.role, filters);
     
     return result;

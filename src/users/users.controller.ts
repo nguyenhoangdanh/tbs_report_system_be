@@ -82,7 +82,7 @@ export class UsersController {
 
   @Get('all')
   @UseGuards(RolesGuard)
-  @Roles(Role.SUPERADMIN)
+  @Roles(Role.SUPERADMIN, Role.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get all users (superadmin only)' })
   async getAllUsers() {

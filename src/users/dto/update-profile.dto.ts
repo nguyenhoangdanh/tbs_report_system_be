@@ -54,6 +54,16 @@ export class UpdateProfileDto {
   @IsUUID()
   officeId?: string;
 
+  @ApiProperty({ description: 'Department ID', required: false })
+  @IsOptional()
+  @IsUUID()
+  departmentId?: string;
+
+  @ApiProperty({ description: 'Position ID', required: false })
+  @IsOptional()
+  @IsUUID()
+  positionId?: string;
+
   @ApiProperty({
     description: 'User role',
     required: false,
@@ -62,19 +72,4 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsEnum(Role)
   role?: Role;
-
-  @ApiProperty({ description: 'Phone number', required: false })
-  @IsOptional()
-  @IsString()
-  phoneNumber?: string;
-
-  @ApiProperty({ description: 'Address', required: false })
-  @IsOptional()
-  @IsString()
-  address?: string;
-
-  @ApiProperty({ description: 'Date of birth', required: false })
-  @IsOptional()
-  @IsString()
-  dateOfBirth?: string;
 }

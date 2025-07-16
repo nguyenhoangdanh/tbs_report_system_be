@@ -93,6 +93,7 @@ export class UsersService {
       }
     }
 
+
     // Validate job position if provided
     if (jobPositionId && jobPositionId !== currentUser.jobPositionId) {
       const jobPosition = await this.prisma.jobPosition.findUnique({

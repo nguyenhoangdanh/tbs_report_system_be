@@ -1,26 +1,37 @@
 #!/bin/bash
 
-echo "🔧 Fixing database schema and data..."
+echo "🔧 Fixing LOCAL database schema and data..."
+
+# Ensure we're using local environment
+export NODE_ENV=development
 
 # 1. Stop the server if running
 echo "🛑 Stopping server..."
 pkill -f "npm.*start" || true
 
-# 2. Reset database and apply new schema
-echo "🗄️ Resetting database..."
-npx prisma db push --force-reset
+# 2. Start local database
+echo "🐳 Starting local database..."
+docker compose up postgres -d
 
-# 3. Generate Prisma client
+# 3. Wait for database
+echo "⏳ Waiting for database to be ready..."
+sleep 10
+
+# 4. Reset database and apply new schema (LOCAL)
+echo "🗄️ Resetting LOCAL database..."
+dotenv -e .env.local -- npx prisma db push --force-reset
+
+# 5. Generate Prisma client
 echo "📦 Generating Prisma client..."
 npx prisma generate
 
-# 4. Run import script
-echo "📊 Importing data from Excel..."
-npx ts-node prisma/import-all-data-from-excel.ts
+# 6. Run import script (LOCAL)
+echo "📊 Importing data from Excel (LOCAL)..."
+dotenv -e .env.local -- npx tsx prisma/import-all-data-from-excel.ts
 
-# 5. Verify data
+# 7. Verify data (LOCAL)
 echo "🔍 Verifying imported data..."
-npx prisma db execute --stdin <<EOF
+dotenv -e .env.local -- npx prisma db execute --stdin <<EOF
 SELECT 
     'users' as table_name, count(*) as count 
 FROM users
@@ -42,4 +53,5 @@ SELECT
 FROM job_positions;
 EOF
 
-echo "✅ Database fix completed!"
+echo "✅ LOCAL database fix completed!"
+echo "💡 For production, use: npm run production:reset"

@@ -235,25 +235,55 @@ export class HierarchyReportsService {
       ]
     });
 
-
-    const jobPositionStats = jobPositions.map(jobPosition => {
-      const stats = this.calculateJobPositionStats(jobPosition.users, weekNumber, year);
+    // Group jobPositions by jobName (consolidate across offices)
+    const jobNameGroups = new Map();
+    
+    jobPositions.forEach(jobPosition => {
+      const jobName = jobPosition.jobName;
       
+      if (!jobNameGroups.has(jobName)) {
+        jobNameGroups.set(jobName, {
+          jobName,
+          position: jobPosition.position,
+          users: [],
+          departments: new Set(),
+          offices: new Set()
+        });
+      }
+      
+      const group = jobNameGroups.get(jobName);
+      
+      // Add users to the group
+      group.users.push(...jobPosition.users);
+      
+      // Track departments and offices for this job name
+      group.departments.add(jobPosition.department.name);
+      group.offices.add(jobPosition.department.office.name);
+    });
+
+    // Convert grouped data to stats format
+    const jobPositionStats = Array.from(jobNameGroups.values()).map(group => {
+      const stats = this.calculateJobPositionStats(group.users, weekNumber, year);
       
       return {
         jobPosition: {
-          id: jobPosition.id,
-          jobName: jobPosition.jobName,
-          code: jobPosition.code,
-          description: jobPosition.description,
-          department: jobPosition.department,
-          position: jobPosition.position
+          id: `grouped_${group.jobName.replace(/\s+/g, '_')}`, // Generate unique ID for grouped data
+          jobName: group.jobName,
+          code: null, // No single code for grouped data
+          description: `${group.jobName} - Across ${group.offices.size} offices`,
+          position: group.position,
+          departments: Array.from(group.departments),
+          offices: Array.from(group.offices),
+          isGrouped: true // Flag to indicate this is grouped data
         },
         stats,
-        userCount: jobPosition.users.length,
-        users: jobPosition.users.map(user => this.mapUserToPositionUser(user))
+        userCount: group.users.length,
+        users: group.users.map(user => this.mapUserToPositionUser(user))
       };
     });
+
+    // Sort by jobName
+    jobPositionStats.sort((a, b) => a.jobPosition.jobName.localeCompare(b.jobPosition.jobName));
 
     const summary = this.calculateStaffSummary(jobPositionStats);
 
@@ -261,7 +291,7 @@ export class HierarchyReportsService {
       weekNumber,
       year,
       viewType: 'staff' as const,
-      groupBy: 'jobPosition' as const,
+      groupBy: 'jobName' as const, // Changed from 'jobPosition' to 'jobName'
       jobPositions: jobPositionStats,
       summary
     };

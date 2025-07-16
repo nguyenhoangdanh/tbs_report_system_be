@@ -198,7 +198,7 @@ export class AuthService {
         user = await this.prisma.user.findFirst({
           where: {
             email: expectedEmail,  // Search for exact email match
-            isActive: true
+            // isActive: true
           },
           include: {
             office: {
@@ -234,12 +234,12 @@ export class AuthService {
         throw new UnauthorizedException('Invalid credentials');
       }
 
-      if (!user.isActive) {
-        if (process.env.NODE_ENV !== 'production') {
-          this.logger.warn(`Login failed for ${employeeCode}: User is inactive`);
-        }
-        throw new UnauthorizedException('Account is inactive');
-      }
+      // if (!user.isActive) {
+      //   if (process.env.NODE_ENV !== 'production') {
+      //     this.logger.warn(`Login failed for ${employeeCode}: User is inactive`);
+      //   }
+      //   throw new UnauthorizedException('Account is inactive');
+      // }
 
       // Check password
       const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -435,7 +435,7 @@ export class AuthService {
       where: {
         employeeCode,
         phone,
-        isActive: true,
+        // isActive: true,
       },
     });
 
@@ -451,7 +451,7 @@ export class AuthService {
     // Update password
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { password: hashedNewPassword },
+      data: { password: hashedNewPassword, isActive: true }, // Ensure account is active after reset
     });
 
     return {
