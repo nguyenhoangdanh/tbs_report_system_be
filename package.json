@@ -18,48 +18,40 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    
     "db:generate": "npx prisma generate",
     "db:studio": "dotenv -e .env.local -- npx prisma studio",
     "db:studio-production": "dotenv -e .env.studio -- npx prisma studio",
-    
     "local:setup": "./fix-database.sh",
     "local:reset": "docker compose down -v && ./fix-database.sh",
     "local:import": "dotenv -e .env.local -- npx tsx prisma/import-all-data-from-excel.ts",
     "local:seed": "dotenv -e .env.local -- npx tsx prisma/seed.ts",
-    
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:reset": "docker compose down -v && docker compose up -d",
-    
     "production:setup": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx prisma generate && npx prisma db push --accept-data-loss && npx tsx prisma/import-all-data-from-excel.ts'",
     "production:reset": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx prisma db push --force-reset --accept-data-loss && npx prisma generate && npx tsx prisma/import-all-data-from-excel.ts'",
     "production:migrate": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx prisma migrate deploy'",
     "production:import": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/import-all-data-from-excel.ts'",
     "production:seed": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/seed.ts'",
     "production:verify": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl ssh console -a weekly-report-backend -C 'psql $DATABASE_URL -c \"SELECT table_name FROM information_schema.tables WHERE table_schema = '\\''public'\\'' ORDER BY table_name;\"'",
-    
     "deploy:prod": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && npm run build && flyctl deploy --strategy immediate",
     "deploy:quick": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl deploy --strategy immediate",
-    
     "monitoring:status": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl status -a weekly-report-backend",
     "monitoring:logs": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl logs -a weekly-report-backend",
     "monitoring:restart": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl apps restart weekly-report-backend",
-    
     "health:check": "curl -f https://weekly-report-backend.fly.dev/health",
-    "health:api": "curl -f https://weekly-report-backend.fly.dev/api/health", 
+    "health:api": "curl -f https://weekly-report-backend.fly.dev/api/health",
     "health:db": "curl -f https://weekly-report-backend.fly.dev/api/health/db",
     "health:all": "npm run health:check && npm run health:api && npm run health:db",
-    
     "scale:512": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl scale memory 512 --yes -a weekly-report-backend",
     "scale:1024": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl scale memory 1024 --yes -a weekly-report-backend",
-    
     "db:proxy-start": "./scripts/db-proxy.sh start",
     "db:proxy-stop": "./scripts/db-proxy.sh stop",
     "db:proxy-restart": "./scripts/db-proxy.sh restart",
     "db:proxy-status": "./scripts/db-proxy.sh status"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.56.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^10.0.0",

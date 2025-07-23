@@ -284,13 +284,6 @@ export function getWorkWeekFromDate(date: Date): { weekNumber: number; year: num
     workYear = isoYear;
   }
 
-  console.log('🔍 getWorkWeekFromDate:', {
-    date: dateFnsFormat(targetDate, 'dd/MM/yyyy (E)', { locale: vi }),
-    dayOfWeek,
-    isoWeek: `${isoWeekNumber}/${isoYear}`,
-    workWeek: `${workWeekNumber}/${workYear}`
-  });
-
   return { weekNumber: workWeekNumber, year: workYear };
 }
 
@@ -341,14 +334,6 @@ export function getWorkWeekDateRange(weekNumber: number, year: number): {
   
   const startDate = friday; // Work week bắt đầu từ T6
   const endDate = workingDays[5]; // Work week kết thúc ở T5 (index 5)
-  
-  console.log('🔍 getWorkWeekDateRange - Work week details:', {
-    workWeek: `${weekNumber}/${year}`,
-    startDate: dateFnsFormat(startDate, 'dd/MM/yyyy (E)', { locale: vi }),
-    endDate: dateFnsFormat(endDate, 'dd/MM/yyyy (E)', { locale: vi }),
-    workingDays: workingDays.map(d => dateFnsFormat(d, 'dd/MM (E)', { locale: vi })),
-    resultDays: resultDays.map(d => dateFnsFormat(d, 'dd/MM (E)', { locale: vi }))
-  });
   
   return { 
     startDate,
@@ -559,4 +544,20 @@ function isNextWeek(
   }
   
   return false;
+}
+
+/**
+ * Get previous work week (for auto-locking reports)
+ * @param weekNumber Current work week number
+ * @param year Current year
+ */
+export function getPreviousWorkWeek(weekNumber: number, year: number): { weekNumber: number; year: number } {
+  if (weekNumber > 1) {
+    return { weekNumber: weekNumber - 1, year };
+  } else {
+    // Xử lý chuyển năm: lấy tuần làm việc cuối cùng của năm trước
+    const lastDayPrevYear = new Date(year - 1, 11, 31);
+    const lastWorkWeek = getWorkWeekFromDate(lastDayPrevYear);
+    return { weekNumber: lastWorkWeek.weekNumber, year: lastWorkWeek.year };
+  }
 }

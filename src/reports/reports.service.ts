@@ -31,8 +31,6 @@ export class ReportsService {
      * - Kiểm tra dựa trên getCurrentWorkWeek() đã được cập nhật
      */
     const { weekNumber: currentWeek, year: currentYear } = getCurrentWorkWeek();
-    console.log('🔍 Create report validation - current work week:', { currentWeek, currentYear });
-    console.log('🔍 Create report validation - requested week:', { weekNumber, year });
     
     const isValidWeek = isValidWeekForCreation(weekNumber, year, currentWeek, currentYear);
 
@@ -121,7 +119,13 @@ export class ReportsService {
     // Check if report exists and belongs to user
     const existingReport = await this.prisma.report.findFirst({
       where: { id: reportId, userId },
-      include: { tasks: true },
+      include: {
+        tasks: {
+          include: {
+            evaluations: true,
+          },
+        },
+      },
     });
 
     if (!existingReport) {
@@ -150,7 +154,7 @@ export class ReportsService {
 
     // Use transaction for atomic updates
     return this.prisma.$transaction(async (prisma) => {
-      // Delete existing tasks if new tasks are provided
+      // Update tasks if new tasks are provided - PRESERVE EVALUATIONS
       if (updateReportDto.tasks) {
         // Validate: require reasonNotDone if not completed
         for (const task of updateReportDto.tasks) {
@@ -164,28 +168,66 @@ export class ReportsService {
           }
         }
         
+        // Store existing evaluations before deleting tasks
+        const existingTasksWithEvaluations = await prisma.reportTask.findMany({
+          where: { reportId },
+          include: {
+            evaluations: true,
+          },
+        });
+
+        // Create a map of task name -> evaluations for preservation
+        const evaluationsMap = new Map();
+        existingTasksWithEvaluations.forEach(task => {
+          if (task.evaluations.length > 0) {
+            evaluationsMap.set(task.taskName, task.evaluations);
+          }
+        });
+
+        // Delete existing tasks (this will cascade delete evaluations)
         await prisma.reportTask.deleteMany({
           where: { reportId },
         });
 
-        // Create new tasks - FIX: Ensure required fields are present
+        // Create new tasks
         if (updateReportDto.tasks.length > 0) {
-          const tasksToCreate = updateReportDto.tasks.map((task) => ({
-            reportId,
-            taskName: task.taskName || '', // Ensure required field is present
-            monday: task.monday || false,
-            tuesday: task.tuesday || false,
-            wednesday: task.wednesday || false,
-            thursday: task.thursday || false,
-            friday: task.friday || false,
-            saturday: task.saturday || false,
-            isCompleted: task.isCompleted || false,
-            reasonNotDone: task.reasonNotDone || null,
-          }));
+          for (const taskDto of updateReportDto.tasks) {
+            // Create the new task
+            const newTask = await prisma.reportTask.create({
+              data: {
+                reportId,
+                taskName: taskDto.taskName || '',
+                monday: taskDto.monday || false,
+                tuesday: taskDto.tuesday || false,
+                wednesday: taskDto.wednesday || false,
+                thursday: taskDto.thursday || false,
+                friday: taskDto.friday || false,
+                saturday: taskDto.saturday || false,
+                isCompleted: taskDto.isCompleted || false,
+                reasonNotDone: taskDto.reasonNotDone || null,
+              },
+            });
 
-          await prisma.reportTask.createMany({
-            data: tasksToCreate,
-          });
+            // Restore evaluations if they existed for this task name
+            const savedEvaluations = evaluationsMap.get(taskDto.taskName);
+            if (savedEvaluations && savedEvaluations.length > 0) {
+              for (const evaluation of savedEvaluations) {
+                await prisma.taskEvaluation.create({
+                  data: {
+                    taskId: newTask.id,
+                    evaluatorId: evaluation.evaluatorId,
+                    originalIsCompleted: evaluation.originalIsCompleted,
+                    evaluatedIsCompleted: evaluation.evaluatedIsCompleted,
+                    originalReasonNotDone: evaluation.originalReasonNotDone,
+                    evaluatedReasonNotDone: evaluation.evaluatedReasonNotDone,
+                    evaluatorComment: evaluation.evaluatorComment,
+                    evaluationType: evaluation.evaluationType,
+                    createdAt: evaluation.createdAt, // Preserve original creation time
+                  },
+                });
+              }
+            }
+          }
         }
       }
 
@@ -237,7 +279,29 @@ export class ReportsService {
       this.prisma.report.findMany({
         where: { userId },
         include: {
-          tasks: true,
+          tasks: {
+            include: {
+              evaluations: {
+                include: {
+                  evaluator: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      lastName: true,
+                      employeeCode: true,
+                      jobPosition: {
+                        include: {
+                          position: true,
+                          department: true
+                        }
+                      }
+                    }
+                  }
+                },
+                orderBy: { createdAt: 'desc' },
+              },
+            },
+          },
           user: {
             include: {
               jobPosition: {
@@ -280,7 +344,6 @@ export class ReportsService {
      * - Kết quả sẽ đồng bộ với frontend
      */
     const { weekNumber, year } = getCurrentWorkWeek();
-    console.log('🔍 Backend getCurrentWeekReport - current work week:', { weekNumber, year });
 
     const report = await this.prisma.report.findUnique({
       where: {
@@ -291,7 +354,35 @@ export class ReportsService {
         },
       },
       include: {
-        tasks: true,
+        tasks: {
+          include: {
+            evaluations: {
+              include: {
+                evaluator: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    employeeCode: true,
+                    jobPosition: {
+                      include: {
+                        position: {
+                          select: {
+                            name: true,
+                            description: true,
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              orderBy: {
+                createdAt: 'desc'
+              }
+            }
+          }
+        },
         user: {
           include: {
             jobPosition: {
@@ -310,7 +401,6 @@ export class ReportsService {
       },
     });
 
-    console.log('🔍 Found current week report:', report ? `Report ID: ${report.id}, Week: ${report.weekNumber}/${report.year}` : 'No report found');
     return report;
   }
 
@@ -321,7 +411,31 @@ export class ReportsService {
         userId, // Ensure user can only access their own reports
       },
       include: {
-        tasks: true,
+        tasks: {
+          include: {
+            evaluations: {
+              include: {
+                evaluator: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    employeeCode: true,
+                    jobPosition: {
+                      include: {
+                        position: true,
+                        department: true
+                      }
+                    }
+                  }
+                }
+              },
+              orderBy: {
+                createdAt: 'desc'
+              }
+            }
+          }
+        },
         user: {
           include: {
             jobPosition: {
@@ -358,6 +472,29 @@ export class ReportsService {
       },
       include: {
         tasks: {
+          include: {
+            evaluations: {
+              include: {
+                evaluator: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    employeeCode: true,
+                    jobPosition: {
+                      include: {
+                        position: true,
+                        department: true
+                      }
+                    }
+                  }
+                }
+              },
+              orderBy: {
+                createdAt: 'desc'
+              }
+            }
+          },
           orderBy: {
             createdAt: 'asc', // Ensure consistent task order
           },
@@ -387,6 +524,83 @@ export class ReportsService {
     }
 
     return report;
+  }
+
+  // Approve task evaluation
+  async approveTask(
+    taskId: string,
+  ) {
+    // Find the task and verify ownership
+    const task = await this.prisma.reportTask.findFirst({
+      where: {
+        id: taskId,
+        // report: { userId },
+      },
+      include: {
+        report: true,
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Task not found or access denied');
+    }
+
+    // Update task isCompleted status
+    const updatedTask = await this.prisma.reportTask.update({
+      where: { id: taskId },
+      data: {
+        isCompleted: true,
+        reasonNotDone: null, // Clear reasonNotDone if task is now completed
+      },
+    });
+
+    // Update report timestamp
+    await this.prisma.report.update({
+      where: { id: task.report.id },
+      data: { updatedAt: new Date() },
+    });
+
+    // Return updated task
+    return updatedTask;
+  }
+
+  // Reject task evaluation
+  async rejectTask(
+    taskId: string,
+    user: string,
+  ) {
+    // Find the task and verify ownership
+    const task = await this.prisma.reportTask.findFirst({
+      where: {
+        id: taskId,
+        // report: { userId },
+      },
+      include: {
+        report: true,
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Task not found or access denied');
+    }
+
+    // Update task isCompleted status
+    const updatedTask = await this.prisma.reportTask.update({
+      where: { id: taskId },
+      data: {
+        isCompleted: false, // Set to not completed
+        reasonNotDone: `Từ chối bởi ${user}`, // Add rejection reason
+      },
+    });
+
+    // Update report timestamp
+    await this.prisma.report.update({
+      where: { id: task.report.id },
+      data: { updatedAt: new Date() },
+    });
+
+    // Return updated task
+    return updatedTask;
   }
 
   // New method to delete individual task

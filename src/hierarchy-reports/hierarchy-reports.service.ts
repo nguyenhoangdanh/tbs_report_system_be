@@ -104,13 +104,45 @@ export class HierarchyReportsService {
                       include: {
                         office: true
                       }
+                    },
+                    position: {
+                      select: {
+                        id: true,
+                        name: true,
+                        description: true,
+                        isManagement: true
+                      }
                     }
                   }
                 },
                 reports: {
                   where: { weekNumber, year },
                   include: {
-                    tasks: true
+                    tasks: {
+                      include: {
+                        evaluations: {
+                          include: {
+                            evaluator: {
+                              select: {
+                                id: true,
+                                firstName: true,
+                                lastName: true,
+                                employeeCode: true,
+                                jobPosition: {
+                                  include: {
+                                    position: true,
+                                    department: true
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          orderBy: {
+                            createdAt: 'desc'
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -216,6 +248,14 @@ export class HierarchyReportsService {
                 department: {
                   include: {
                     office: true
+                  }
+                },
+                position: {
+                  select: {
+                    id: true,
+                    name: true,
+                    description: true,
+                    isManagement: true
                   }
                 }
               }
@@ -334,13 +374,11 @@ export class HierarchyReportsService {
     };
   }
 
-  // Đơn giản hóa buildUserAccessFilter - bỏ logic level
+  // Updated buildUserAccessFilter to support recursive subordinate access
   private async buildUserAccessFilter(userId: string, userRole: Role) {
-    const accessFilter: any = {};
-    
     if (userRole === Role.SUPERADMIN || userRole === Role.ADMIN) {
       // SUPERADMIN và ADMIN có thể xem tất cả
-      return accessFilter;
+      return {};
     }
     
     if (userRole === Role.USER) {
@@ -361,24 +399,44 @@ export class HierarchyReportsService {
         throw new NotFoundException('User not found');
       }
 
-      // Nếu user có position.canViewHierarchy = true, có thể xem cấp dưới trong cùng department
+      // Nếu user có position.canViewHierarchy = true và là management
       if (user.jobPosition?.position?.canViewHierarchy === true) {
-        // Management user có thể xem trong cùng department
-        accessFilter.jobPosition = {
-          departmentId: user.jobPosition.departmentId
-        };
+        if (user.jobPosition?.position?.isManagement) {
+          // Management user có thể xem tất cả subordinates (recursive)
+          // Get all subordinate user IDs
+          const subordinates = await this.getAllSubordinatesRecursively(user);
+          const subordinateIds = subordinates.map(sub => sub.id);
+          
+          if (subordinateIds.length > 0) {
+            return {
+              id: { in: subordinateIds }
+            };
+          } else {
+            // If no subordinates, return impossible condition
+            return { id: 'no-subordinates' };
+          }
+        } else {
+          // Non-management user with canViewHierarchy - xem trong cùng department
+          return {
+            jobPosition: {
+              departmentId: user.jobPosition.departmentId
+            }
+          };
+        }
       } else {
         // Regular user chỉ có thể xem đồng nghiệp cùng cấp trong department
-        accessFilter.jobPosition = {
-          departmentId: user.jobPosition.departmentId,
-          position: {
-            isManagement: false // CHỈ xem non-management positions
+        return {
+          jobPosition: {
+            departmentId: user.jobPosition.departmentId,
+            position: {
+              isManagement: false // CHỈ xem non-management positions
+            }
           }
         };
       }
     }
     
-    return accessFilter;
+    return {};
   }
 
   /**
@@ -913,7 +971,31 @@ export class HierarchyReportsService {
                 reports: {
                   where: { weekNumber, year },
                   include: {
-                    tasks: true
+                    tasks: {
+                      include: {
+                        evaluations: {
+                          include: {
+                            evaluator: {
+                              select: {
+                                id: true,
+                                firstName: true,
+                                lastName: true,
+                                employeeCode: true,
+                                jobPosition: {
+                                  include: {
+                                    position: true,
+                                    department: true
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          orderBy: {
+                            createdAt: 'desc'
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -1032,7 +1114,15 @@ export class HierarchyReportsService {
     const reports = await this.prisma.report.findMany({
       where: reportsWhere,
       include: {
-        tasks: true
+        tasks: {
+          include: {
+            evaluations: {
+              include: {
+                evaluator: true,
+              }
+            }
+          }
+        }
       },
       orderBy: [
         { year: 'desc' },
@@ -1888,6 +1978,884 @@ export class HierarchyReportsService {
       taskCompletionRate,
       tasksByDay,
       incompleteReasons,
+    };
+  }
+
+  /**
+   * Get manager reports - for managers to view reports of their subordinates
+   * 
+   * AUTHORIZATION MATRIX:
+   * 
+   * ADMIN (Tổng Giám Đốc / General Director, Level 0):
+   * - Can view reports of ALL employees across the entire system
+   * - No office_id or level restrictions
+   * 
+   * USER Role - Office-based + Level-based Authorization:
+   * - MUST have same office_id as requesting user
+   * - MUST have higher level number (lower in hierarchy)
+   * 
+   * Level-based Hierarchy (USER Role - same office only):
+   * - Level 1 (Phó Tổng Giám Đốc): Views levels 2,3,4,5,6,7
+   * - Level 2 (Giám Đốc): Views levels 3,4,5,6,7
+   * - Level 3 (Phó Giám đốc): Views levels 4,5,6,7
+   * - Level 4 (Đội trưởng/Trưởng Line/Trưởng phòng): Views levels 5,6,7
+   * - Level 5 (Trưởng Team/Trưởng ca/Trợ lý): Views levels 6,7
+   *   * Special case: Trợ lý (Assistant) has NO viewing rights
+   * - Level 6 (Tổ trưởng): Views level 7
+   * - Level 7 (Nhân viên): NO permission to view others' reports
+   * 
+   * DATA STRUCTURE:
+   * - Reports grouped by Position (Chức danh) and Job Position (Vị trí công việc)
+   * - Each group contains employee list with their task report details
+   * - Optimized for frontend display and navigation
+   */
+  async getManagerReports(userId: string, userRole: Role, filters: HierarchyFilters = {}) {
+    // Get the manager's information
+    const manager = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: {
+              include: {
+                office: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!manager) {
+      throw new NotFoundException('Manager not found');
+    }
+
+    // Check if user has management permissions
+    const hasManagementPermission = this.checkManagerPermissions(manager, userRole);
+    if (!hasManagementPermission) {
+      throw new ForbiddenException('You do not have permission to view subordinate reports');
+    }
+
+    const { weekNumber, year } = this.getWeekFilters(filters);
+
+    // Get subordinates based on manager's role and position
+    const subordinates = await this.getSubordinates(manager, userRole);
+
+    // Get reports for subordinates
+    const reports = await this.prisma.report.findMany({
+      where: {
+        weekNumber,
+        year,
+        userId: {
+          in: subordinates.map(sub => sub.id)
+        }
+      },
+      include: {
+        tasks: {
+          include: {
+            evaluations: {
+              include: {
+                evaluator: true,
+              }
+            }
+          },
+          orderBy: { createdAt: 'asc' }
+        },
+        user: {
+          include: {
+            office: true,
+            jobPosition: {
+              include: {
+                position: true,
+                department: {
+                  include: {
+                    office: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      orderBy: [
+        { user: { jobPosition: { department: { name: 'asc' } } } },
+        { user: { lastName: 'asc' } },
+        { user: { firstName: 'asc' } }
+      ]
+    });
+
+    // Group data by Position and Job Position for frontend
+    const groupedData = this.groupReportsByPositionAndJobPosition(subordinates, reports);
+
+    // Calculate overall summary
+    const summary = this.calculateManagerSummaryFromGrouped(groupedData);
+
+    return {
+      manager: {
+        id: manager.id,
+        firstName: manager.firstName,
+        lastName: manager.lastName,
+        fullName: `${manager.firstName} ${manager.lastName}`,
+        office: manager.office,
+        jobPosition: manager.jobPosition,
+        role: userRole,
+        level: manager.jobPosition?.position?.level,
+        officeId: manager.officeId
+      },
+      weekNumber,
+      year,
+      groupedReports: groupedData,
+      summary
+    };
+  }
+
+  /**
+   * Check if user has management permissions based on precise role-based authorization
+   * 
+   * ADMIN (Tổng Giám Đốc): Always has full permissions
+   * USER: Level-based permissions (Level 1-6 can view subordinates, Level 7 cannot)
+   * Special case: Trợ lý (Assistant) at Level 5 has no viewing rights
+   */
+  private checkManagerPermissions(user: any, userRole: Role): boolean {
+    // ADMIN (Tổng Giám Đốc) and SUPERADMIN always have management permissions
+    if (userRole === Role.ADMIN || userRole === Role.SUPERADMIN) {
+      return true;
+    }
+
+    // USER Role: Check level-based permissions
+    if (userRole === Role.USER) {
+      const position = user.jobPosition?.position;
+      const level = position?.level;
+
+      // Level 7 (Nhân viên) has NO permission to view others' reports
+      if (level >= 7) {
+        return false;
+      }
+
+      // Level 5: Check if this is an Assistant role
+      if (level === 5) {
+        const isAssistant = this.isAssistantRole(position?.name);
+        if (isAssistant) {
+          return false; // Assistants have no viewing rights
+        }
+      }
+
+      // Levels 1-6 (excluding Assistant at Level 5) have management permissions
+      if (level >= 1 && level <= 6) {
+        return true;
+      }
+
+      // Level 0 or undefined: Should be treated as ADMIN (Tổng Giám Đốc)
+      if (level === 0 || level === undefined) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Get subordinates based on simplified office-based and level-based authorization
+   * 
+   * AUTHORIZATION RULES:
+   * 1. ADMIN (Tổng Giám Đốc, Level 0): View ALL employees across entire system
+   * 2. USER (Levels 1-7): Must be same office_id AND higher level (lower rank)
+   * 
+   * LEVEL-BASED HIERARCHY (USER Role - same office only):
+   * - Level 1 (Phó Tổng Giám Đốc): Views levels 2,3,4,5,6,7
+   * - Level 2 (Giám Đốc): Views levels 3,4,5,6,7  
+   * - Level 3 (Phó Giám đốc): Views levels 4,5,6,7
+   * - Level 4 (Đội trưởng/Trưởng Line/Trưởng phòng): Views levels 5,6,7
+   * - Level 5 (Trưởng Team/Trưởng ca/Trợ lý): Views levels 6,7 (Trợ lý may see none)
+   * - Level 6 (Tổ trưởng): Views level 7
+   * - Level 7 (Nhân viên): NO permission
+   */
+  private async getSubordinates(manager: any, userRole: Role) {
+    const managerLevel = manager.jobPosition?.position?.level;
+    const managerOfficeId = manager.officeId;
+
+    // ADMIN Role: Tổng Giám Đốc can view ALL employees system-wide
+    if (userRole === Role.ADMIN) {
+      return await this.prisma.user.findMany({
+        where: {
+          isActive: true,
+          id: { not: manager.id }
+        },
+        include: {
+          office: true,
+          jobPosition: {
+            include: {
+              position: true,
+              department: {
+                include: {
+                  office: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: [
+          { jobPosition: { position: { level: 'asc' } } },
+          { jobPosition: { department: { name: 'asc' } } },
+          { lastName: 'asc' },
+          { firstName: 'asc' }
+        ]
+      });
+    }
+
+    // USER Role: Office-based + Level-based filtering
+    if (userRole === Role.USER) {
+      // Level 7 (Nhân viên): NO permission to view others' reports
+      if (managerLevel >= 7) {
+        return [];
+      }
+
+      // Level 5: Check if this is an Assistant role
+      if (managerLevel === 5) {
+        const isAssistant = this.isAssistantRole(manager.jobPosition?.position?.name);
+        if (isAssistant) {
+          return []; // Assistants have no viewing rights
+        }
+      }
+
+      // Determine target levels based on manager level
+      const targetLevels = this.getTargetLevelsForManager(managerLevel);
+      
+      if (targetLevels.length === 0) {
+        return [];
+      }
+
+      // Query users with same office_id, target levels, and department restrictions
+      const departmentFilter = this.getDepartmentFilterForLevel(managerLevel, manager.jobPosition?.departmentId);
+      
+      return await this.prisma.user.findMany({
+        where: {
+          isActive: true,
+          id: { not: manager.id },
+          officeId: managerOfficeId, // MUST be same office
+          jobPosition: {
+            position: {
+              level: { in: targetLevels } // MUST be higher level (lower in hierarchy)
+            },
+            ...departmentFilter // Add department filtering for same-level restrictions
+          }
+        },
+        include: {
+          office: true,
+          jobPosition: {
+            include: {
+              position: true,
+              department: {
+                include: {
+                  office: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: [
+          { jobPosition: { position: { level: 'asc' } } },
+          { jobPosition: { department: { name: 'asc' } } },
+          { lastName: 'asc' },
+          { firstName: 'asc' }
+        ]
+      });
+    }
+
+    // SUPERADMIN fallback
+    if (userRole === Role.SUPERADMIN) {
+      return await this.prisma.user.findMany({
+        where: {
+          isActive: true,
+          id: { not: manager.id }
+        },
+        include: {
+          office: true,
+          jobPosition: {
+            include: {
+              position: true,
+              department: {
+                include: {
+                  office: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: [
+          { jobPosition: { position: { level: 'asc' } } },
+          { jobPosition: { department: { name: 'asc' } } },
+          { lastName: 'asc' },
+          { firstName: 'asc' }
+        ]
+      });
+    }
+
+    return [];
+  }
+
+  /**
+   * Get target levels that a manager can view based on their level
+   */
+  private getTargetLevelsForManager(managerLevel: number): number[] {
+    switch (managerLevel) {
+      case 1: // Phó Tổng Giám Đốc
+        return [2, 3, 4, 5, 6, 7];
+      case 2: // Giám Đốc  
+        return [3, 4, 5, 6, 7];
+      case 3: // Phó Giám đốc
+        return [4, 5, 6, 7];
+      case 4: // Đội trưởng/Trưởng Line/Trưởng phòng
+        return [5, 6, 7];
+      case 5: // Trưởng Team/Trưởng ca/Trợ lý
+        return [6, 7];
+      case 6: // Tổ trưởng
+        return [7];
+      case 7: // Nhân viên
+        return [];
+      default:
+        // Level 0 or undefined should be handled as ADMIN
+        return [];
+    }
+  }
+
+  /**
+   * Get department filter based on manager level to restrict access to department-specific employees
+   * 
+   * DEPARTMENT RESTRICTIONS:
+   * - Level 1 (Phó Tổng Giám Đốc): Can view across departments (management scope)
+   * - Level 2 (Giám Đốc): Can view across departments within their management area
+   * - Level 3+ (Phó Giám đốc and below): MUST be same department only
+   * 
+   * This ensures that same-level managers (e.g., Trưởng phòng A vs Trưởng phòng B) 
+   * can only see employees in their own department
+   */
+  private getDepartmentFilterForLevel(managerLevel: number, managerDepartmentId: string) {
+    switch (managerLevel) {
+      case 1: // Phó Tổng Giám Đốc
+        // Can view across departments (no department restriction)
+        return {};
+        
+      case 2: // Giám Đốc
+        // Can view across departments in their management area (no strict department restriction)
+        // But this might be configurable based on business rules
+        return {};
+        
+      case 3: // Phó Giám đốc
+      case 4: // Đội trưởng/Trưởng Line/Trưởng phòng  
+      case 5: // Trưởng Team/Trưởng ca
+      case 6: // Tổ trưởng
+        // MUST be same department - this prevents same-level cross-department access
+        return {
+          departmentId: managerDepartmentId
+        };
+        
+      case 7: // Nhân viên
+        // No access anyway
+        return {};
+        
+      default:
+        // Default to department restriction for safety
+        return {
+          departmentId: managerDepartmentId
+        };
+    }
+  }
+
+  /**
+   * Helper method to check if a position is an Assistant role (Trợ lý)
+   */
+  private isAssistantRole(positionName: string): boolean {
+    if (!positionName) return false;
+    const name = positionName.toLowerCase();
+    return name.includes('trợ lý') || name.includes('assistant') || name.includes('tro ly');
+  }
+
+  /**
+   * Get subordinates by level and management scope with precise departmental restrictions
+   */
+  private async getSubordinatesByLevelAndScope(
+    manager: any, 
+    targetLevels: number[], 
+    scope: 'group' | 'team_or_shift' | 'department_or_team' | 'department' | 'management_scope'
+  ) {
+    const managerLevel = manager.jobPosition?.position?.level;
+    const managerDepartmentId = manager.jobPosition?.departmentId;
+    const managerOfficeId = manager.officeId;
+
+    const whereClause: any = {
+      isActive: true,
+      id: { not: manager.id },
+      jobPosition: {
+        position: {
+          level: { in: targetLevels }
+        }
+      }
+    };
+
+    // Apply scope-based filtering
+    switch (scope) {
+      case 'group':
+        // Tổ trưởng: Only view employees in the same department and directly under them
+        whereClause.jobPosition.departmentId = managerDepartmentId;
+        break;
+
+      case 'team_or_shift':
+        // Trưởng Team/Trưởng ca: View employees in same department under their team/shift
+        whereClause.jobPosition.departmentId = managerDepartmentId;
+        break;
+
+      case 'department_or_team':
+        // Đội trưởng/Trưởng Line/Trưởng phòng: View employees in their department or team
+        whereClause.jobPosition.departmentId = managerDepartmentId;
+        break;
+
+      case 'department':
+        // Giám Đốc/Phó Giám đốc: View all employees in their department
+        whereClause.jobPosition.departmentId = managerDepartmentId;
+        break;
+
+      case 'management_scope':
+        // Phó Tổng Giám Đốc: View employees across multiple departments in their management scope
+        // This might encompass multiple departments within the same office or division
+        whereClause.officeId = managerOfficeId;
+        break;
+
+      default:
+        // Default to department scope
+        whereClause.jobPosition.departmentId = managerDepartmentId;
+        break;
+    }
+
+    return await this.prisma.user.findMany({
+      where: whereClause,
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: {
+              include: {
+                office: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: [
+        { jobPosition: { position: { level: 'asc' } } },
+        { jobPosition: { department: { name: 'asc' } } },
+        { lastName: 'asc' },
+        { firstName: 'asc' }
+      ]
+    });
+  }
+
+  /**
+   * Get all subordinates recursively for a management position (Legacy method - kept for compatibility)
+   */
+  private async getAllSubordinatesRecursively(manager: any): Promise<any[]> {
+    const managerLevel = manager.jobPosition?.position?.level;
+    const managerDepartmentId = manager.jobPosition?.departmentId;
+    const managerOfficeId = manager.officeId;
+
+    // Get all users in the same office with lower hierarchy levels
+    const allUsers = await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        id: { not: manager.id },
+        officeId: managerOfficeId,
+        jobPosition: {
+          position: {
+            level: {
+              gt: managerLevel // Higher level number = lower in hierarchy
+            }
+          }
+        }
+      },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: {
+              include: {
+                office: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Build hierarchy tree to find actual subordinates
+    const subordinates = new Set<string>();
+    const processed = new Set<string>();
+
+    // Start with direct subordinates (same department, next level down)
+    const directSubordinates = allUsers.filter(user => 
+      user.jobPosition?.departmentId === managerDepartmentId &&
+      user.jobPosition?.position?.level === managerLevel + 1
+    );
+
+    // Add direct subordinates
+    directSubordinates.forEach(user => subordinates.add(user.id));
+
+    // Recursively find subordinates of subordinates
+    const findSubordinatesRecursively = (currentManagers: any[]) => {
+      const nextLevelManagers: any[] = [];
+      
+      currentManagers.forEach(currentManager => {
+        if (processed.has(currentManager.id)) return;
+        processed.add(currentManager.id);
+
+        const currentManagerLevel = currentManager.jobPosition?.position?.level;
+        const currentManagerDepartmentId = currentManager.jobPosition?.departmentId;
+
+        // Find users who report to this current manager
+        const reportsTo = allUsers.filter(user => {
+          // Skip if already processed
+          if (subordinates.has(user.id) || processed.has(user.id)) return false;
+
+          const userLevel = user.jobPosition?.position?.level;
+          const userDepartmentId = user.jobPosition?.departmentId;
+
+          // Check if this user could be subordinate to current manager
+          // 1. Must be in same department OR in a sub-department structure
+          // 2. Must be exactly one level below OR in management chain
+          if (userLevel === currentManagerLevel + 1) {
+            // Same department - direct report
+            if (userDepartmentId === currentManagerDepartmentId) return true;
+            
+            // Cross-department management (e.g., Plant Director managing multiple departments)
+            if (currentManager.jobPosition?.position?.isManagement && userLevel > managerLevel) {
+              return true;
+            }
+          }
+
+          return false;
+        });
+
+        // Add these subordinates and prepare them for next iteration
+        reportsTo.forEach(user => {
+          subordinates.add(user.id);
+          // If this user is also a manager, they might have subordinates
+          if (user.jobPosition?.position?.isManagement || user.jobPosition?.position?.canViewHierarchy) {
+            nextLevelManagers.push(user);
+          }
+        });
+      });
+
+      // Continue recursively if there are more managers to process
+      if (nextLevelManagers.length > 0) {
+        findSubordinatesRecursively(nextLevelManagers);
+      }
+    };
+
+    // Start recursive search with direct subordinates who are managers
+    const managerSubordinates = directSubordinates.filter(user => 
+      user.jobPosition?.position?.isManagement || user.jobPosition?.position?.canViewHierarchy
+    );
+    
+    if (managerSubordinates.length > 0) {
+      findSubordinatesRecursively(managerSubordinates);
+    }
+
+    // Return all found subordinates
+    const result = allUsers.filter(user => subordinates.has(user.id));
+
+    // Sort by hierarchy level and name
+    result.sort((a, b) => {
+      const levelA = a.jobPosition?.position?.level || 999;
+      const levelB = b.jobPosition?.position?.level || 999;
+      
+      if (levelA !== levelB) return levelA - levelB;
+      
+      const deptA = a.jobPosition?.department?.name || '';
+      const deptB = b.jobPosition?.department?.name || '';
+      if (deptA !== deptB) return deptA.localeCompare(deptB);
+      
+      const lastNameA = a.lastName || '';
+      const lastNameB = b.lastName || '';
+      if (lastNameA !== lastNameB) return lastNameA.localeCompare(lastNameB);
+      
+      return (a.firstName || '').localeCompare(b.firstName || '');
+    });
+
+    return result;
+  }
+
+  /**
+   * Calculate statistics for a subordinate
+   */
+  private calculateSubordinateStats(subordinate: any, report: any) {
+    if (!report) {
+      return {
+        hasReport: false,
+        isCompleted: false,
+        totalTasks: 0,
+        completedTasks: 0,
+        incompleteTasks: 0,
+        taskCompletionRate: 0,
+        status: 'not_submitted' as const
+      };
+    }
+
+    const totalTasks = report.tasks.length;
+    const completedTasks = report.tasks.filter((task: any) => task.isCompleted).length;
+    const incompleteTasks = totalTasks - completedTasks;
+    const taskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+    let status: 'not_submitted' | 'incomplete' | 'completed' = 'not_submitted';
+    if (report.isCompleted) {
+      status = 'completed';
+    } else if (totalTasks > 0) {
+      status = 'incomplete';
+    }
+
+    return {
+      hasReport: true,
+      isCompleted: report.isCompleted,
+      totalTasks,
+      completedTasks,
+      incompleteTasks,
+      taskCompletionRate,
+      status
+    };
+  }
+
+  /**
+   * Group reports by Position and Job Position for frontend display
+   */
+  private groupReportsByPositionAndJobPosition(subordinates: any[], reports: any[]) {
+    const positionGroups = new Map();
+    
+    subordinates.forEach(subordinate => {
+      const position = subordinate.jobPosition?.position;
+      const jobPosition = subordinate.jobPosition;
+      const userReport = reports.find(r => r.userId === subordinate.id);
+      
+      if (!position || !jobPosition) return;
+      
+      // Create position group key
+      const positionKey = `${position.id}_${position.name}_${position.level}`;
+      
+      if (!positionGroups.has(positionKey)) {
+        positionGroups.set(positionKey, {
+          position: {
+            id: position.id,
+            name: position.name,
+            level: position.level,
+            description: position.description,
+            isManagement: position.isManagement
+          },
+          jobPositionGroups: new Map(),
+          totalUsers: 0,
+          usersWithReports: 0,
+          usersWithCompletedReports: 0
+        });
+      }
+      
+      const positionGroup = positionGroups.get(positionKey);
+      
+      // Create job position group key
+      const jobPositionKey = `${jobPosition.id}_${jobPosition.jobName}_${jobPosition.departmentId}`;
+      
+      if (!positionGroup.jobPositionGroups.has(jobPositionKey)) {
+        positionGroup.jobPositionGroups.set(jobPositionKey, {
+          jobPosition: {
+            id: jobPosition.id,
+            jobName: jobPosition.jobName,
+            code: jobPosition.code,
+            description: jobPosition.description,
+            department: jobPosition.department,
+            position: position
+          },
+          employees: [],
+          stats: {
+            totalUsers: 0,
+            usersWithReports: 0,
+            usersWithCompletedReports: 0,
+            totalTasks: 0,
+            completedTasks: 0,
+            taskCompletionRate: 0
+          }
+        });
+      }
+      
+      const jobPositionGroup = positionGroup.jobPositionGroups.get(jobPositionKey);
+      const stats = this.calculateSubordinateStats(subordinate, userReport);
+      
+      // Add employee to job position group
+      jobPositionGroup.employees.push({
+        user: {
+          id: subordinate.id,
+          employeeCode: subordinate.employeeCode,
+          firstName: subordinate.firstName,
+          lastName: subordinate.lastName,
+          fullName: `${subordinate.firstName} ${subordinate.lastName}`,
+          email: subordinate.email,
+          office: subordinate.office,
+          jobPosition: subordinate.jobPosition
+        },
+        report: userReport ? {
+          id: userReport.id,
+          weekNumber: userReport.weekNumber,
+          year: userReport.year,
+          isCompleted: userReport.isCompleted,
+          isLocked: userReport.isLocked,
+          createdAt: userReport.createdAt.toISOString(),
+          updatedAt: userReport.updatedAt.toISOString(),
+          tasks: userReport.tasks
+        } : null,
+        stats
+      });
+      
+      // Update job position group stats
+      jobPositionGroup.stats.totalUsers++;
+      if (stats.hasReport) {
+        jobPositionGroup.stats.usersWithReports++;
+        jobPositionGroup.stats.totalTasks += stats.totalTasks;
+        jobPositionGroup.stats.completedTasks += stats.completedTasks;
+      }
+      if (stats.isCompleted) {
+        jobPositionGroup.stats.usersWithCompletedReports++;
+      }
+      
+      // Update position group stats
+      positionGroup.totalUsers++;
+      if (stats.hasReport) {
+        positionGroup.usersWithReports++;
+      }
+      if (stats.isCompleted) {
+        positionGroup.usersWithCompletedReports++;
+      }
+    });
+
+    // Convert Maps to Arrays and calculate final stats
+    const result = Array.from(positionGroups.values()).map(positionGroup => {
+      const jobPositions = Array.from(positionGroup.jobPositionGroups.values()).map((jobPositionGroup: any) => {
+        // Calculate task completion rate for job position
+        jobPositionGroup.stats.taskCompletionRate = jobPositionGroup.stats.totalTasks > 0
+          ? Math.round((jobPositionGroup.stats.completedTasks / jobPositionGroup.stats.totalTasks) * 100)
+          : 0;
+        
+        return jobPositionGroup;
+      });
+
+      return {
+        ...positionGroup,
+        jobPositions: jobPositions.sort((a: any, b: any) => a.jobPosition.jobName.localeCompare(b.jobPosition.jobName))
+      };
+    });
+
+    // Sort by position level
+    return result.sort((a, b) => a.position.level - b.position.level);
+  }
+
+  /**
+   * Calculate manager summary from grouped data
+   */
+  private calculateManagerSummaryFromGrouped(groupedData: any[]) {
+    let totalSubordinates = 0;
+    let subordinatesWithReports = 0;
+    let subordinatesWithCompletedReports = 0;
+    let totalTasks = 0;
+    let totalCompletedTasks = 0;
+
+    groupedData.forEach(positionGroup => {
+      totalSubordinates += positionGroup.totalUsers;
+      subordinatesWithReports += positionGroup.usersWithReports;
+      subordinatesWithCompletedReports += positionGroup.usersWithCompletedReports;
+
+      positionGroup.jobPositions.forEach((jobPositionGroup: any) => {
+        totalTasks += jobPositionGroup.stats.totalTasks;
+        totalCompletedTasks += jobPositionGroup.stats.completedTasks;
+      });
+    });
+
+    const reportSubmissionRate = totalSubordinates > 0 ? Math.round((subordinatesWithReports / totalSubordinates) * 100) : 0;
+    const overallTaskCompletionRate = totalTasks > 0 ? Math.round((totalCompletedTasks / totalTasks) * 100) : 0;
+
+    return {
+      totalSubordinates,
+      subordinatesWithReports,
+      subordinatesWithoutReports: totalSubordinates - subordinatesWithReports,
+      subordinatesWithCompletedReports,
+      subordinatesWithIncompleteReports: subordinatesWithReports - subordinatesWithCompletedReports,
+      reportSubmissionRate,
+      totalTasks,
+      totalCompletedTasks,
+      overallTaskCompletionRate,
+      totalPositions: groupedData.length,
+      totalJobPositions: groupedData.reduce((sum, pg) => sum + pg.jobPositions.length, 0)
+    };
+  }
+
+  /**
+   * Calculate manager summary statistics (Legacy method - kept for compatibility)
+   */
+  private calculateManagerSummary(subordinateReports: any[]) {
+    const totalSubordinates = subordinateReports.length;
+    const subordinatesWithReports = subordinateReports.filter(sr => sr.stats.hasReport).length;
+    const subordinatesWithoutReports = totalSubordinates - subordinatesWithReports;
+    const subordinatesWithCompletedReports = subordinateReports.filter(sr => sr.stats.isCompleted).length;
+    const subordinatesWithIncompleteReports = subordinateReports.filter(sr => 
+      sr.stats.hasReport && !sr.stats.isCompleted
+    ).length;
+
+    const totalTasks = subordinateReports.reduce((sum, sr) => sum + sr.stats.totalTasks, 0);
+    const totalCompletedTasks = subordinateReports.reduce((sum, sr) => sum + sr.stats.completedTasks, 0);
+    const overallTaskCompletionRate = totalTasks > 0 ? Math.round((totalCompletedTasks / totalTasks) * 100) : 0;
+
+    const reportSubmissionRate = totalSubordinates > 0 ? Math.round((subordinatesWithReports / totalSubordinates) * 100) : 0;
+
+    // Group by department
+    const departmentBreakdown = new Map();
+    subordinateReports.forEach(sr => {
+      const deptId = sr.user.jobPosition?.department?.id;
+      const deptName = sr.user.jobPosition?.department?.name;
+      
+      if (deptId && deptName) {
+        if (!departmentBreakdown.has(deptId)) {
+          departmentBreakdown.set(deptId, {
+            id: deptId,
+            name: deptName,
+            totalSubordinates: 0,
+            subordinatesWithReports: 0,
+            subordinatesWithCompletedReports: 0,
+            totalTasks: 0,
+            completedTasks: 0
+          });
+        }
+        
+        const dept = departmentBreakdown.get(deptId);
+        dept.totalSubordinates++;
+        dept.totalTasks += sr.stats.totalTasks;
+        dept.completedTasks += sr.stats.completedTasks;
+        
+        if (sr.stats.hasReport) {
+          dept.subordinatesWithReports++;
+        }
+        if (sr.stats.isCompleted) {
+          dept.subordinatesWithCompletedReports++;
+        }
+      }
+    });
+
+    return {
+      totalSubordinates,
+      subordinatesWithReports,
+      subordinatesWithoutReports,
+      subordinatesWithCompletedReports,
+      subordinatesWithIncompleteReports,
+      reportSubmissionRate,
+      totalTasks,
+      totalCompletedTasks,
+      overallTaskCompletionRate,
+      departmentBreakdown: Array.from(departmentBreakdown.values())
     };
   }
 }

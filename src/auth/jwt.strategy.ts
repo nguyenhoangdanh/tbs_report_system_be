@@ -13,14 +13,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private prisma: PrismaService,
     private envConfig: EnvironmentConfig,
   ) {
-    // Debug JWT secret consistency
-    if (envConfig.isProduction) {
-      console.log('JWT Strategy Debug:', {
-        secretLength: envConfig.jwtSecret.length,
-        secretPrefix: envConfig.jwtSecret.substring(0, 10),
-        environment: envConfig.nodeEnv,
-      });
-    }
 
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([

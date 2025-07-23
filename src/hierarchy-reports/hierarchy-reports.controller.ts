@@ -423,6 +423,40 @@ export class HierarchyReportsController {
   }
 
   /**
+   * Get manager reports - for managers to view reports of their subordinates
+   */
+  @Get('manager-reports')
+  @ApiOperation({ summary: 'Get manager reports - for managers to view reports of their subordinates' })
+  @ApiResponse({ status: 200, description: 'Manager reports retrieved successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - User does not have management permissions' })
+  @ApiQuery({ name: 'weekNumber', required: false, description: 'Week number' })
+  @ApiQuery({ name: 'year', required: false, description: 'Year' })
+  @HttpCode(HttpStatus.OK)
+  async getManagerReports(
+    @GetUser() user: any,
+    @Query('weekNumber') weekNumber?: string,
+    @Query('year') year?: string,
+  ) {
+    const filters: any = {};
+
+    if (weekNumber) {
+      const parsedWeekNumber = parseInt(weekNumber, 10);
+      if (!isNaN(parsedWeekNumber) && parsedWeekNumber >= 1 && parsedWeekNumber <= 53) {
+        filters.weekNumber = parsedWeekNumber;
+      }
+    }
+
+    if (year) {
+      const parsedYear = parseInt(year, 10);
+      if (!isNaN(parsedYear) && parsedYear >= 2020 && parsedYear <= 2030) {
+        filters.year = parsedYear;
+      }
+    }
+
+    return this.hierarchyReportsService.getManagerReports(user.id, user.role, filters);
+  }
+
+  /**
    * Get specific report details for admin view
    */
   @Get('user/:userId/report/:reportId')

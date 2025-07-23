@@ -65,15 +65,15 @@ export class AuthService {
     }
 
     // Check if phone is already used (if provided)
-    if (phone) {
-      const existingPhone = await this.prisma.user.findUnique({
-        where: { phone },
-      });
+    // if (phone) {
+    //   const existingPhone = await this.prisma.user.findUnique({
+    //     where: { phone },
+    //   });
 
-      if (existingPhone) {
-        throw new ConflictException('User with this card ID already exists');
-      }
-    }
+    //   if (existingPhone) {
+    //     throw new ConflictException('User with this card ID already exists');
+    //   }
+    // }
 
     // Validate job position and office
     const [jobPosition, office] = await Promise.all([
@@ -143,7 +143,7 @@ export class AuthService {
       }
 
       // Ensure database connection before query
-      await this.prisma.ensureConnection();
+      // await this.prisma.ensureConnection();
 
       // Enhanced user lookup - support both MSNV and email prefix
       let user = null;
@@ -171,7 +171,7 @@ export class AuthService {
             jobPosition: {
               include: {
                 position: {
-                  select: { id: true, name: true, description: true }
+                  select: { id: true, name: true, description: true, level: true}
                 },
                 department: {
                   select: { id: true, name: true }
@@ -180,20 +180,13 @@ export class AuthService {
             },
           },
         });
-
-        if (process.env.NODE_ENV !== 'production' && user) {
-          this.logger.log(`Found user by MSNV: ${employeeCode} -> ${user.email}`);
-        }
+      
       }
 
       // If not found by MSNV and input looks like email prefix, try email search
       if (!user && isEmailPrefix) {
         // Find user by email prefix - construct full email pattern
         const expectedEmail = `${employeeCode}@tbsgroup.vn`;
-        
-        if (process.env.NODE_ENV !== 'production') {
-          this.logger.log(`Searching for email: ${expectedEmail}`);
-        }
         
         user = await this.prisma.user.findFirst({
           where: {
@@ -207,7 +200,7 @@ export class AuthService {
             jobPosition: {
               include: {
                 position: {
-                  select: { id: true, name: true, description: true }
+                  select: { id: true, name: true, description: true, level: true }
                 },
                 department: {
                   select: { id: true, name: true }
@@ -217,20 +210,9 @@ export class AuthService {
           },
         });
 
-        if (process.env.NODE_ENV !== 'production' && user) {
-          this.logger.log(`Found user by email prefix: ${employeeCode} -> ${user.email}`);
-        }
       }
 
       if (!user) {
-        if (process.env.NODE_ENV !== 'production') {
-          this.logger.warn(`Login failed for ${employeeCode}: User not found`, {
-            searchedAsMSNV: isNumericMSNV,
-            searchedAsEmailPrefix: isEmailPrefix,
-            expectedEmail: isEmailPrefix ? `${employeeCode}@tbsgroup.vn` : null,
-            inputType: isNumericMSNV ? 'NUMERIC_MSNV' : isEmailPrefix ? 'EMAIL_PREFIX' : 'INVALID_FORMAT'
-          });
-        }
         throw new UnauthorizedException('Invalid credentials');
       }
 
@@ -254,19 +236,6 @@ export class AuthService {
       // Generate JWT token with explicit secret logging for debugging
       const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
       
-      // Debug JWT secret in production to verify consistency
-      if (this.envConfig.isProduction) {
-        this.logger.log('JWT Generation Debug:', {
-          secretLength: this.envConfig.jwtSecret.length,
-          secretPrefix: this.envConfig.jwtSecret.substring(0, 10),
-          payloadSub: payload.sub,
-          expiresIn: rememberMe ? '30d' : '7d',
-          loginMethod: isNumericMSNV ? 'MSNV' : 'EMAIL_PREFIX',
-          originalInput: employeeCode,
-          foundUser: user.employeeCode,
-          matchedEmail: user.email
-        });
-      }
       
       const access_token = this.jwtService.sign(payload, {
         expiresIn: rememberMe ? '30d' : '7d',
@@ -282,6 +251,7 @@ export class AuthService {
       const { password: _, ...userWithoutPassword } = user;
       const userResponse = {
         ...userWithoutPassword,
+        isManager: user.jobPosition.position.name === "NV" && user.jobPosition.position.level === 7 ? false : true,
         createdAt: userWithoutPassword.createdAt.toISOString(),
         updatedAt: userWithoutPassword.updatedAt.toISOString(),
       };
@@ -492,15 +462,15 @@ export class AuthService {
     response.cookie('access_token', token, cookieOptions);
     
     // Debug: Also set a test cookie to verify cross-origin works
-    if (isProduction) {
-      response.cookie('debug-token', 'test-value', {
-        httpOnly: false, // Make it accessible via JS for debugging
-        secure: true,
-        sameSite: 'none',
-        maxAge: 300000, // 5 minutes
-        path: '/',
-      });
-    }
+    // if (isProduction) {
+    //   response.cookie('debug-token', 'test-value', {
+    //     httpOnly: false, // Make it accessible via JS for debugging
+    //     secure: true,
+    //     sameSite: 'none',
+    //     maxAge: 300000, // 5 minutes
+    //     path: '/',
+    //   });
+    // }
   }
 
   private clearAuthCookie(response: Response) {
@@ -518,12 +488,12 @@ export class AuthService {
     response.clearCookie('access_token', cookieOptions);
     
     // Also clear debug cookie
-    if (isProduction) {
-      response.clearCookie('debug-token', {
-        secure: true,
-        sameSite: 'none',
-        path: '/',
-      });
-    }
+    // if (isProduction) {
+    //   response.clearCookie('debug-token', {
+    //     secure: true,
+    //     sameSite: 'none',
+    //     path: '/',
+    //   });
+    // }
   }
 }

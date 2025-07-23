@@ -265,7 +265,7 @@ async function processExcelData(): Promise<ProcessedData> {
       const vt = String(row[3]).trim();
       const pb = String(row[4]).trim();
       const tt = String(row[5]).trim();
-      const phone = row[6] ? String(row[6]).trim() : undefined;
+      const phone = row[6] ? String(row[6]).trim() : '';
       const email = row[7] ? String(row[7]).trim() : generateEmail(msnv, hoTen);
       const role = row[8] ? String(row[8]).trim() : undefined;
 

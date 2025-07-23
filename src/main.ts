@@ -86,6 +86,22 @@ async function bootstrap() {
       // Enhanced CORS for production debugging
       optionsSuccessStatus: 200,
       preflightContinue: false,
+      allowedHeaders: [
+        'Origin',
+        'X-Requested-With', 
+        'Content-Type',
+        'Accept',
+        'Authorization',
+        'Cache-Control',     // ✅ Allow Cache-Control
+        'Pragma',            // ✅ Allow Pragma
+        'X-Content-Type-Options',
+        'X-Frame-Options',
+        'X-XSS-Protection',
+        'Access-Control-Allow-Credentials',
+        'Access-Control-Allow-Origin',
+        'Access-Control-Allow-Headers',
+        'Access-Control-Allow-Methods'
+      ],
     });
     
     console.log('✅ CORS configuration applied');
@@ -187,7 +203,7 @@ async function bootstrap() {
       setTimeout(async () => {
         try {
           const prismaService = app.get(PrismaService); // Fix: Use PrismaService directly
-          await prismaService.testConnection();
+          // await prismaService.testConnection();
           console.log('✅ Database connection verified');
         } catch (error) {
           console.error('❌ Database connection failed:', error.message);

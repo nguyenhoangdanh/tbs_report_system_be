@@ -1,13 +1,9 @@
-// src/common/prisma.service.ts
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  OnModuleDestroy,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { EnvironmentConfig } from '../config/config.environment';
 
+/**
+ * Service providing access to the Prisma ORM client optimized for Neon PostgreSQL
+ */
 @Injectable()
 export class PrismaService
   extends PrismaClient
@@ -16,225 +12,171 @@ export class PrismaService
   private readonly logger = new Logger(PrismaService.name);
   private connectionRetries = 0;
   private maxRetries = 5;
-  private retryDelay = 3000;
+  private retryDelay = 2000;
   private isConnected = false;
-  private isConnecting = false; // Prevent multiple concurrent connections
+  private isConnecting = false;
 
-  constructor(private envConfig: EnvironmentConfig) {
-    const config = envConfig.getDatabaseConfig();
-
+  constructor() {
     super({
-      datasources: config.datasources,
-      errorFormat: config.errorFormat,
-      transactionOptions: config.transactionOptions,
-      log: process.env.NODE_ENV === 'production' 
-        ? [{ emit: 'event', level: 'error' }, { emit: 'event', level: 'warn' }]
-        : [
-            { emit: 'event', level: 'query' },
-            { emit: 'event', level: 'error' },
-            { emit: 'event', level: 'info' },
-            { emit: 'event', level: 'warn' },
-          ],
-    });
-
-    // Log connection info only once
-    const connectionInfo = envConfig.getDatabaseConnectionInfo();
-    this.logger.log(`🔗 Database connection info:`, {
-      environment: connectionInfo.environment,
-      host: connectionInfo.host,
-      port: connectionInfo.port,
-      database: connectionInfo.database,
-      isSSL: connectionInfo.isSSL,
+      // Optimized configuration for Neon PostgreSQL
+      datasources: {
+        db: {
+          url: process.env.DATABASE_URL,
+        },
+      },
+      // log: process.env.NODE_ENV === 'development'
+      //   ? ['query', 'info', 'warn', 'error']
+      //   : ['error'],
+      log: ['error', 'warn'],
+      errorFormat: 'pretty',
+      // Connection pool settings optimized for Neon
+      transactionOptions: {
+        timeout: 30000, // 30 seconds
+        maxWait: 10000, // 10 seconds
+        isolationLevel: 'ReadCommitted',
+      },
     });
   }
 
+  /**
+   * Connect to the database with retry logic for Neon
+   */
   async onModuleInit() {
-    // Prevent multiple initialization
     if (this.isConnecting || this.isConnected) {
-      return;
-    }
-
-    // For production, connect in background to prevent blocking startup
-    if (this.envConfig.isProduction) {
-      this.connectAsync();
-    } else {
-      await this.connectWithRetry();
-    }
-  }
-
-  private async connectAsync() {
-    // Prevent multiple async connections
-    if (this.isConnecting) {
       return;
     }
 
     this.isConnecting = true;
     
-    // Connect in background for production to prevent blocking
-    setTimeout(async () => {
-      try {
-        await this.connectWithRetry();
-      } catch (error) {
-        this.logger.error(
-          'Background database connection failed:',
-          error.message,
-        );
-      } finally {
-        this.isConnecting = false;
-      }
-    }, 1000);
-  }
-
-  private async connectWithRetry(): Promise<void> {
-    // Prevent multiple concurrent connection attempts
-    if (this.isConnecting || this.isConnected) {
-      return;
-    }
-
-    this.isConnecting = true;
-
     try {
-      while (this.connectionRetries < this.maxRetries && !this.isConnected) {
-        try {
-          this.logger.log(
-            `🔄 Attempting database connection (${
-              this.connectionRetries + 1
-            }/${this.maxRetries})...`,
-          );
-
-          // Log connection details (masked) - only once per attempt
-          if (this.connectionRetries === 0) {
-            const maskedUrl = this.envConfig.databaseUrl.replace(
-              /\/\/([^:]+):([^@]+)@/,
-              '//***:***@',
-            );
-            this.logger.log(`📡 Database URL: ${maskedUrl}`);
-            this.logger.log(`🌍 Environment: ${this.envConfig.nodeEnv}`);
-          }
-
-          // Add timeout to connection attempt
-          await Promise.race([
-            this.$connect(),
-            new Promise((_, reject) =>
-              setTimeout(
-                () => reject(new Error('Connection timeout after 15s')),
-                15000,
-              ),
-            ),
-          ]);
-
-          // Test with simple query
-          await Promise.race([
-            this.$queryRaw`SELECT 1 as test`,
-            new Promise((_, reject) =>
-              setTimeout(
-                () => reject(new Error('Query timeout after 10s')),
-                10000,
-              ),
-            ),
-          ]);
-
-          this.logger.log('✅ Database connected successfully');
-          this.isConnected = true;
-          this.connectionRetries = 0;
-
-          // Log database info only once
-          try {
-            const dbInfo = await this.getDatabaseInfo();
-            this.logger.log(
-              `📊 Connected to: ${dbInfo.database} (${dbInfo.version})`,
-            );
-          } catch (error) {
-            this.logger.warn('Could not fetch database info:', error.message);
-          }
-
-          return;
-        } catch (error) {
-          this.connectionRetries++;
-          this.logger.error(
-            `❌ Connection failed (${this.connectionRetries}/${this.maxRetries}): ${error.message}`,
-          );
-
-          // Enhanced error logging with specific troubleshooting
-          this.logConnectionError(error);
-
-          // Disconnect before retry
-          try {
-            await this.$disconnect();
-          } catch (disconnectError) {
-            // Ignore disconnect errors
-          }
-
-          if (this.connectionRetries >= this.maxRetries) {
-            if (this.envConfig.isProduction) {
-              this.logger.warn(
-                '⚠️ Max retries reached in production, continuing without connection',
-              );
-              this.logger.warn(
-                '🔧 App will start but database operations may fail',
-              );
-              return;
-            } else {
-              throw new Error(
-                `Database connection failed after ${this.maxRetries} attempts: ${error.message}`,
-              );
-            }
-          }
-
-          // Exponential backoff with jitter
-          const delay = Math.min(
-            this.retryDelay * Math.pow(1.5, this.connectionRetries - 1) + 
-            Math.random() * 1000, // Add jitter
-            30000 // Max 30 seconds
-          );
-          this.logger.log(`⏳ Retrying in ${Math.round(delay)}ms...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
+      await this.connectWithRetry();
     } finally {
       this.isConnecting = false;
     }
   }
 
-  private logConnectionError(error: any) {
-    if (error.message.includes('ENOTFOUND')) {
-      this.logger.error('🌐 DNS resolution failed');
-      this.logger.error('💡 Check: Database host name is correct');
-    } else if (error.message.includes('ECONNREFUSED')) {
-      this.logger.error('🚪 Connection refused');
-      this.logger.error(
-        '💡 Check: Database server is running and accepting connections',
-      );
-    } else if (error.message.includes('timeout')) {
-      this.logger.error('⏰ Connection timeout');
-      this.logger.error('💡 Check: Network connectivity and firewall settings');
-    } else if (error.message.includes('authentication failed')) {
-      this.logger.error('🔐 Authentication failed');
-      this.logger.error('💡 Check: Username and password are correct');
-    } else if (
-      error.message.includes('TLS') ||
-      error.message.includes('SSL') ||
-      error.message.includes('certificate')
-    ) {
-      this.logger.error('🔒 TLS/SSL error');
-      this.logger.error('💡 Check: SSL configuration and certificates');
-    } else if (
-      error.message.includes('database') &&
-      error.message.includes('does not exist')
-    ) {
-      this.logger.error('🗄️ Database does not exist');
-      this.logger.error('💡 Check: Database name is correct');
-    } else {
-      this.logger.error(`🔍 Unknown error: ${error.message}`);
+  /**
+   * Connect with retry logic optimized for Neon's serverless nature
+   */
+  private async connectWithRetry(): Promise<void> {
+    while (this.connectionRetries < this.maxRetries && !this.isConnected) {
+      try {
+        this.logger.log(
+          `🔄 Connecting to Neon database (attempt ${this.connectionRetries + 1}/${this.maxRetries})...`,
+        );
+
+        // Connection timeout for Neon
+        await Promise.race([
+          this.$connect(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Connection timeout after 20s')), 20000),
+          ),
+        ]);
+
+        // Test connection with a simple query
+        await Promise.race([
+          this.$queryRaw`SELECT 1 as health_check, NOW() as current_time`,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Health check timeout after 10s')), 10000),
+          ),
+        ]);
+
+        this.logger.log('✅ Connected to Neon PostgreSQL successfully');
+        this.isConnected = true;
+        this.connectionRetries = 0;
+
+        // Log connection info
+        try {
+          const dbInfo = await this.getDatabaseInfo();
+          this.logger.log(`📊 Database: ${dbInfo.database} | Version: ${dbInfo.version.split(' ')[0]}`);
+        } catch (error) {
+          this.logger.warn('Could not fetch database info:', error.message);
+        }
+
+        return;
+      } catch (error) {
+        this.connectionRetries++;
+        this.logger.error(
+          `❌ Connection failed (${this.connectionRetries}/${this.maxRetries}): ${error.message}`,
+        );
+
+        this.logNeonConnectionError(error);
+
+        // Disconnect before retry
+        try {
+          await this.$disconnect();
+        } catch (disconnectError) {
+          // Ignore disconnect errors
+        }
+
+        if (this.connectionRetries >= this.maxRetries) {
+          const errorMsg = `Neon database connection failed after ${this.maxRetries} attempts: ${error.message}`;
+          this.logger.error(`🚨 ${errorMsg}`);
+          
+          if (process.env.NODE_ENV === 'production') {
+            this.logger.warn('⚠️ Continuing in production mode - database operations may fail');
+            return;
+          } else {
+            throw new Error(errorMsg);
+          }
+        }
+
+        // Exponential backoff with jitter for Neon
+        const delay = Math.min(
+          this.retryDelay * Math.pow(1.8, this.connectionRetries - 1) + Math.random() * 1000,
+          15000 // Max 15 seconds for Neon
+        );
+        
+        this.logger.log(`⏳ Retrying in ${Math.round(delay)}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
   }
 
+  /**
+   * Enhanced error logging for Neon-specific issues
+   */
+  private logNeonConnectionError(error: any) {
+    const message = error.message.toLowerCase();
+
+    if (message.includes('enotfound')) {
+      this.logger.error('🌐 DNS resolution failed for Neon endpoint');
+      this.logger.error('💡 Check: Neon database endpoint URL is correct');
+    } else if (message.includes('econnrefused') || message.includes('connection refused')) {
+      this.logger.error('🚪 Connection refused by Neon');
+      this.logger.error('💡 Check: Neon database is active and not suspended');
+    } else if (message.includes('timeout')) {
+      this.logger.error('⏰ Connection timeout to Neon');
+      this.logger.error('💡 Check: Network connectivity and Neon region latency');
+    } else if (message.includes('authentication') || message.includes('password')) {
+      this.logger.error('🔐 Authentication failed with Neon');
+      this.logger.error('💡 Check: Database credentials are correct and not expired');
+    } else if (message.includes('ssl') || message.includes('tls')) {
+      this.logger.error('🔒 SSL/TLS error with Neon');
+      this.logger.error('💡 Check: SSL mode is set to "require" for Neon');
+    } else if (message.includes('database') && message.includes('does not exist')) {
+      this.logger.error('🗄️ Database does not exist in Neon');
+      this.logger.error('💡 Check: Database name is correct in Neon console');
+    } else if (message.includes('suspended') || message.includes('inactive')) {
+      this.logger.error('💤 Neon database is suspended or inactive');
+      this.logger.error('💡 Check: Neon project status and billing');
+    } else {
+      this.logger.error(`🔍 Unknown Neon connection error: ${error.message}`);
+      this.logger.error('💡 Check: Neon console for database status and logs');
+    }
+  }
+
+  /**
+   * Ensure connection is active (useful for long-running operations)
+   */
   async ensureConnection(): Promise<void> {
     if (!this.isConnected) {
       await this.connectWithRetry();
+      return;
     }
 
     try {
+      // Quick health check
       await Promise.race([
         this.$queryRaw`SELECT 1`,
         new Promise((_, reject) =>
@@ -242,7 +184,7 @@ export class PrismaService
         ),
       ]);
     } catch (error) {
-      this.logger.warn('🔄 Connection lost, attempting to reconnect...');
+      this.logger.warn('🔄 Connection lost, reconnecting to Neon...');
       this.isConnected = false;
 
       try {
@@ -255,32 +197,27 @@ export class PrismaService
     }
   }
 
-  async onModuleDestroy() {
-    this.logger.log('🔄 Gracefully disconnecting from database...');
-    try {
-      await this.$disconnect();
-      this.isConnected = false;
-      this.logger.log('✅ Database disconnected');
-    } catch (error) {
-      this.logger.error('❌ Error during disconnect:', error);
-    }
-  }
-
+  /**
+   * Check if database connection is healthy
+   */
   async isHealthy(): Promise<boolean> {
     try {
       await Promise.race([
-        this.$queryRaw`SELECT 1`,
+        this.$queryRaw`SELECT 1 as health`,
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Health check timeout')), 5000),
         ),
       ]);
       return true;
     } catch (error) {
-      this.logger.error('💔 Database health check failed:', error.message);
+      this.logger.error('💔 Neon database health check failed:', error.message);
       return false;
     }
   }
 
+  /**
+   * Get database information
+   */
   async getDatabaseInfo(): Promise<{
     database: string;
     username: string;
@@ -298,6 +235,49 @@ export class PrismaService
     return result[0];
   }
 
+  /**
+   * Test connection with latency measurement
+   */
+  async testConnection(): Promise<{
+    success: boolean;
+    latency?: number;
+    error?: string;
+    details?: any;
+  }> {
+    const startTime = Date.now();
+
+    try {
+      const result = await Promise.race([
+        this.$queryRaw`
+          SELECT 
+            1 as test_query,
+            current_timestamp as query_time,
+            current_database() as database,
+            current_user as username
+        `,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Test query timeout')), 10000),
+        ),
+      ]);
+
+      const latency = Date.now() - startTime;
+
+      return {
+        success: true,
+        latency,
+        details: result[0],
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get connection status for health monitoring
+   */
   async getConnectionStatus(): Promise<{
     isConnected: boolean;
     lastError?: string;
@@ -309,9 +289,9 @@ export class PrismaService
       const dbInfo = await this.getDatabaseInfo();
 
       return {
-        isConnected: true,
+        isConnected: this.isConnected,
         retryCount: this.connectionRetries,
-        environment: this.envConfig.nodeEnv,
+        environment: process.env.NODE_ENV || 'development',
         databaseInfo: dbInfo,
       };
     } catch (error) {
@@ -319,11 +299,14 @@ export class PrismaService
         isConnected: false,
         lastError: error.message,
         retryCount: this.connectionRetries,
-        environment: this.envConfig.nodeEnv,
+        environment: process.env.NODE_ENV || 'development',
       };
     }
   }
 
+  /**
+   * Get database statistics
+   */
   async getDatabaseStats(): Promise<{
     totalTables: number;
     totalRecords: { [tableName: string]: number };
@@ -335,9 +318,6 @@ export class PrismaService
         SELECT 
           schemaname,
           tablename,
-          n_tup_ins as inserts,
-          n_tup_upd as updates,
-          n_tup_del as deletes,
           n_live_tup as live_rows
         FROM pg_stat_user_tables 
         ORDER BY n_live_tup DESC;
@@ -369,38 +349,9 @@ export class PrismaService
     }
   }
 
-  async testConnection(): Promise<{
-    success: boolean;
-    latency?: number;
-    error?: string;
-    details?: any;
-  }> {
-    const startTime = Date.now();
-
-    try {
-      const result = await this.$queryRaw`
-        SELECT 
-          1 as test_query,
-          current_timestamp as query_time,
-          current_database() as database,
-          current_user as user
-      `;
-
-      const latency = Date.now() - startTime;
-
-      return {
-        success: true,
-        latency,
-        details: result[0],
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
+  /**
+   * Check if a table exists in the database
+   */
   async checkTableExists(tableName: string): Promise<boolean> {
     try {
       const result = (await this.$queryRaw`
@@ -421,45 +372,17 @@ export class PrismaService
     }
   }
 
-  async getMigrationStatus(): Promise<{
-    appliedMigrations: number;
-    pendingMigrations: number;
-    lastMigration?: string;
-  }> {
+  /**
+   * Disconnect from the database when the module is destroyed
+   */
+  async onModuleDestroy() {
+    this.logger.log('🔄 Gracefully disconnecting from Neon database...');
     try {
-      // Check if _prisma_migrations table exists
-      const migrationTableExists =
-        await this.checkTableExists('_prisma_migrations');
-
-      if (!migrationTableExists) {
-        return {
-          appliedMigrations: 0,
-          pendingMigrations: 0,
-        };
-      }
-
-      const migrations = (await this.$queryRaw`
-        SELECT 
-          migration_name,
-          applied_steps_count,
-          finished_at
-        FROM _prisma_migrations 
-        ORDER BY started_at DESC;
-      `) as any[];
-
-      const lastMigration = migrations[0];
-
-      return {
-        appliedMigrations: migrations.length,
-        pendingMigrations: 0, // Prisma doesn't expose this easily
-        lastMigration: lastMigration?.migration_name,
-      };
+      await this.$disconnect();
+      this.isConnected = false;
+      this.logger.log('✅ Disconnected from Neon database');
     } catch (error) {
-      this.logger.error('Failed to get migration status:', error.message);
-      return {
-        appliedMigrations: 0,
-        pendingMigrations: 0,
-      };
+      this.logger.error('❌ Error during Neon disconnect:', error.message);
     }
   }
 }

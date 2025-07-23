@@ -90,7 +90,7 @@ model User {
   password      String
   firstName     String
   lastName      String
-  phone         String?   @unique
+  phone         String?   
   role          Role      @default(USER)
   jobPositionId String
   isActive      Boolean   @default(false)
@@ -98,6 +98,7 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   reports       Report[]
+  evaluations   TaskEvaluation[]  // Tasks this user has evaluated
   jobPosition   JobPosition @relation(fields: [jobPositionId], references: [id])
   office        Office      @relation(fields: [officeId], references: [id])
 
@@ -131,24 +132,48 @@ model Report {
 }
 
 model ReportTask {
-  id            String   @id @default(uuid())
+  id            String          @id @default(uuid())
   reportId      String
   taskName      String
-  monday        Boolean  @default(false)
-  tuesday       Boolean  @default(false)
-  wednesday     Boolean  @default(false)
-  thursday      Boolean  @default(false)
-  friday        Boolean  @default(false)
-  saturday      Boolean  @default(false)
-  isCompleted   Boolean  @default(false)
+  monday        Boolean         @default(false)
+  tuesday       Boolean         @default(false)
+  wednesday     Boolean         @default(false)
+  thursday      Boolean         @default(false)
+  friday        Boolean         @default(false)
+  saturday      Boolean         @default(false)
+  isCompleted   Boolean         @default(false)
   reasonNotDone String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  report        Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  report        Report          @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  evaluations   TaskEvaluation[]
 
   @@index([reportId])
   @@index([isCompleted])
   @@map("report_tasks")
+}
+
+model TaskEvaluation {
+  id                String      @id @default(uuid())
+  taskId            String
+  evaluatorId       String
+  originalIsCompleted Boolean   @default(false) // Original task completion status
+  evaluatedIsCompleted Boolean  @default(false) // Manager's evaluation of completion
+  originalReasonNotDone String? // Original reason for not completing
+  evaluatedReasonNotDone String? // Manager's evaluation of the reason
+  evaluatorComment  String?     // Manager's comment on the evaluation
+  evaluationType    EvaluationType @default(REVIEW) // Type of evaluation
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  task              ReportTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  evaluator         User        @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, evaluatorId]) // One evaluation per task per evaluator
+  @@index([taskId])
+  @@index([evaluatorId])
+  @@index([evaluationType])
+  @@index([createdAt])
+  @@map("task_evaluations")
 }
 
 enum Role {
@@ -160,4 +185,10 @@ enum Role {
 enum OfficeType {
   HEAD_OFFICE
   FACTORY_OFFICE
+}
+
+enum EvaluationType {
+  REVIEW        // General review/evaluation
+  APPROVAL      // Approving task completion
+  REJECTION     // Rejecting task completion
 }

@@ -35,7 +35,8 @@ export class UsersService {
     }
 
     const { password, ...userWithoutPassword } = user;
-    return userWithoutPassword;
+    const isManager = user.jobPosition.position.name === "NV" && user.jobPosition.position.level === 7 ? false : true;
+    return { ...userWithoutPassword, isManager };
   }
 
   async updateProfile(
@@ -124,14 +125,14 @@ export class UsersService {
     }
 
     // Check if phone is already used by another user
-    if (phone && phone !== currentUser.phone) {
-      const existingUser = await this.prisma.user.findUnique({
-        where: { phone },
-      });
-      if (existingUser && existingUser.id !== userId) {
-        throw new BadRequestException('Phone number is already in use');
-      }
-    }
+    // if (phone && phone !== currentUser.phone) {
+    //   const existingUser = await this.prisma.user.findUnique({
+    //     where: { phone },
+    //   });
+    //   if (existingUser && existingUser.id !== userId) {
+    //     throw new BadRequestException('Phone number is already in use');
+    //   }
+    // }
 
     // Build update data - users can update all their fields
     const updateData: any = {

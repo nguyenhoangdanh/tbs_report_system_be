@@ -144,15 +144,6 @@ export class AuthController {
       path: '/',
     });
 
-    console.log('[COOKIE-DEBUG] Request details:', {
-      origin: req.headers.origin,
-      userAgent: req.headers['user-agent']?.substring(0, 50),
-      cookies: Object.keys(req.cookies || {}),
-      hasAccessToken: !!accessToken,
-      hasDebugToken: !!debugToken,
-      accessTokenLength: accessToken ? accessToken.length : 0,
-    });
-
     return {
       success: true,
       hasAccessToken: !!accessToken,
