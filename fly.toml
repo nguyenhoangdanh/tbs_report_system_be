@@ -1,6 +1,4 @@
 # fly.toml app configuration file for weekly-report-backend
-# FIXED: Strict 24/7 configuration to prevent auto-sleep
-
 app = "weekly-report-backend"
 primary_region = "sin"
 
@@ -9,51 +7,51 @@ primary_region = "sin"
 [env]
   NODE_ENV = "production"
   PORT = "8080"
+  # Add Node.js crypto support
+  NODE_OPTIONS = "--experimental-global-webcrypto"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  
-  # CRITICAL: Prevent auto-sleep completely
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
   max_machines_running = 1
   
   # Keep-alive settings
-  keep_alive_timeout = "120s"
+  keep_alive_timeout = "300s"
   
   # Optimized concurrency
   concurrency = { type = "connections", hard_limit = 300, soft_limit = 200 }
 
-# Aggressive health checks to keep machine awake
+# FIXED: Longer grace periods for Performance CPU startup
 [[http_service.checks]]
-  interval = "10s"
-  grace_period = "15s"
+  interval = "30s"
+  grace_period = "180s"      # 3 minutes for crypto startup
   method = "GET"
   path = "/health"
   protocol = "http"
-  timeout = "10s"
+  timeout = "25s"
   tls_skip_verify = false
   headers = { "User-Agent" = "fly-health-check" }
 
 [[http_service.checks]]
-  interval = "30s"
-  grace_period = "20s"
+  interval = "60s"
+  grace_period = "240s"      # 4 minutes for full initialization
   method = "GET"
   path = "/api/health"
   protocol = "http"
-  timeout = "15s"
+  timeout = "35s"
   tls_skip_verify = false
   headers = { "User-Agent" = "fly-health-check" }
 
-# VM configuration - cost optimized but always-on
+# VM configuration - Performance CPU with 2GB (as requested)
 [[vm]]
-  memory = "512mb"
-  cpu_kind = "dedicated"
-  cpus = 2
+  memory = "2048MiB"
+  cpu_kind = "performance"
+  cpus = 1
 
-# Deploy settings - ensure single machine
+# Deploy settings
 [deploy]
   strategy = "immediate"
   max_concurrent_machines = 1

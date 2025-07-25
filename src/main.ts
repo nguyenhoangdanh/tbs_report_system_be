@@ -6,6 +6,12 @@ import { EnvironmentConfig } from './config/config.environment';
 import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { PrismaService } from './common/prisma.service';
+import { webcrypto } from 'node:crypto';
+
+// Polyfill for crypto in Node.js environment
+if (!globalThis.crypto) {
+  globalThis.crypto = webcrypto as any;
+}
 
 async function bootstrap() {
   try {

@@ -30,11 +30,11 @@ export class PrismaService
       log: ['error', 'warn'],
       errorFormat: 'pretty',
       // Connection pool settings optimized for Neon
-      transactionOptions: {
-        timeout: 30000, // 30 seconds
-        maxWait: 10000, // 10 seconds
-        isolationLevel: 'ReadCommitted',
-      },
+      // transactionOptions: {
+      //   timeout: 30000, // 30 seconds
+      //   maxWait: 10000, // 10 seconds
+      //   isolationLevel: 'ReadCommitted',
+      // },
     });
   }
 
@@ -103,10 +103,14 @@ export class PrismaService
         this.logNeonConnectionError(error);
 
         // Disconnect before retry
-        try {
-          await this.$disconnect();
-        } catch (disconnectError) {
-          // Ignore disconnect errors
+        // Chỉ disconnect nếu thực sự cần, tránh disconnect liên tục
+        if (this.isConnected) {
+          try {
+            await this.$disconnect();
+          } catch (disconnectError) {
+            // Ignore disconnect errors
+          }
+          this.isConnected = false;
         }
 
         if (this.connectionRetries >= this.maxRetries) {
