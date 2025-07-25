@@ -1,38 +1,239 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database for development
-  postgres:
+  # PostgreSQL Master (Primary)
+  postgres-master:
     image: postgres:15-alpine
-    container_name: weekly_report_postgres
+    container_name: weekly_report_postgres_master
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: weekly_report_dev
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
-    ports:
-      - "5433:5432"
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-TBSGroup2024SecurePass}
+      POSTGRES_DB: ${DB_NAME:-weekly_report_backend}
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-ReplicationPass2024}
+      # Master configuration
+      PGUSER: postgres
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
+      - postgres_master_data:/var/lib/postgresql/data
+      - ./scripts/postgres-master-init.sh:/docker-entrypoint-initdb.d/01-master-init.sh:ro
+      - ./configs/postgresql-master.conf:/etc/postgresql/postgresql.conf:ro
+      - ./configs/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./backups:/backups
+    ports:
+      - "5432:5432"
     networks:
       - weekly_report_network
+    command: |
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d weekly_report_dev"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${DB_NAME:-weekly_report_backend}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    command: >
-      postgres
-      -c max_connections=200
-      -c shared_buffers=256MB
-      -c effective_cache_size=1GB
-      -c maintenance_work_mem=64MB
-      -c checkpoint_completion_target=0.9
-      -c wal_buffers=16MB
-      -c default_statistics_target=100
+
+  # PostgreSQL Standby 1 (Read Replica)
+  postgres-standby-1:
+    image: postgres:15-alpine
+    container_name: weekly_report_postgres_standby_1
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-TBSGroup2024SecurePass}
+      POSTGRES_DB: ${DB_NAME:-weekly_report_backend}
+      POSTGRES_MASTER_SERVICE: postgres-master
+      PGUSER: postgres
+    volumes:
+      - postgres_standby_1_data:/var/lib/postgresql/data
+      - ./scripts/postgres-standby-init.sh:/docker-entrypoint-initdb.d/01-standby-init.sh:ro
+      - ./configs/postgresql-standby.conf:/etc/postgresql/postgresql.conf:ro
+      - ./configs/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    ports:
+      - "5433:5432"
+    networks:
+      - weekly_report_network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    command: |
+      bash -c "
+        if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+          echo 'Setting up standby server...'
+          PGPASSWORD=${REPLICATION_PASSWORD:-ReplicationPass2024} pg_basebackup -h postgres-master -D /var/lib/postgresql/data -U replicator -v -P -W
+          echo 'standby_mode = on' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'primary_conninfo = ''host=postgres-master port=5432 user=replicator password=${REPLICATION_PASSWORD:-ReplicationPass2024}''' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'trigger_file = ''/tmp/postgresql.trigger.5433''' >> /var/lib/postgresql/data/postgresql.conf
+        fi
+        postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # PostgreSQL Standby 2 (Read Replica)
+  postgres-standby-2:
+    image: postgres:15-alpine
+    container_name: weekly_report_postgres_standby_2
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-TBSGroup2024SecurePass}
+      POSTGRES_DB: ${DB_NAME:-weekly_report_backend}
+      POSTGRES_MASTER_SERVICE: postgres-master
+      PGUSER: postgres
+    volumes:
+      - postgres_standby_2_data:/var/lib/postgresql/data
+      - ./scripts/postgres-standby-init.sh:/docker-entrypoint-initdb.d/01-standby-init.sh:ro
+      - ./configs/postgresql-standby.conf:/etc/postgresql/postgresql.conf:ro
+      - ./configs/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    ports:
+      - "5434:5432"
+    networks:
+      - weekly_report_network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    command: |
+      bash -c "
+        if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+          echo 'Setting up standby server...'
+          PGPASSWORD=${REPLICATION_PASSWORD:-ReplicationPass2024} pg_basebackup -h postgres-master -D /var/lib/postgresql/data -U replicator -v -P -W
+          echo 'standby_mode = on' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'primary_conninfo = ''host=postgres-master port=5432 user=replicator password=${REPLICATION_PASSWORD:-ReplicationPass2024}''' >> /var/lib/postgresql/data/postgresql.conf
+          echo 'trigger_file = ''/tmp/postgresql.trigger.5434''' >> /var/lib/postgresql/data/postgresql.conf
+        fi
+        postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # HAProxy for Load Balancing
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: weekly_report_haproxy
+    restart: unless-stopped
+    ports:
+      - "5430:5432"  # Write operations
+      - "5431:5433"  # Read operations
+      - "8404:8404"  # HAProxy stats
+    volumes:
+      - ./configs/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - weekly_report_network
+    depends_on:
+      - postgres-master
+      - postgres-standby-1
+      - postgres-standby-2
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Backend Application
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: weekly_report_backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      # Master database for writes
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-TBSGroup2024SecurePass}@haproxy:5432/${DB_NAME:-weekly_report_backend}?sslmode=disable
+      # Read replica for reads
+      DATABASE_READ_URL: postgresql://postgres:${DB_PASSWORD:-TBSGroup2024SecurePass}@haproxy:5433/${DB_NAME:-weekly_report_backend}?sslmode=disable
+      DIRECT_URL: postgresql://postgres:${DB_PASSWORD:-TBSGroup2024SecurePass}@postgres-master:5432/${DB_NAME:-weekly_report_backend}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-aJX3NYxZepmbIbxjnRdLcus+VZVIHE0YtXsXjcpNyTA=}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      JWT_REMEMBER_ME_EXPIRES_IN: ${JWT_REMEMBER_ME_EXPIRES_IN:-7d}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    networks:
+      - weekly_report_network
+    depends_on:
+      haproxy:
+        condition: service_healthy
+      postgres-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Backup Service
+  backup:
+    image: postgres:15-alpine
+    container_name: weekly_report_backup
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-TBSGroup2024SecurePass}
+      DB_NAME: ${DB_NAME:-weekly_report_backend}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./scripts/restore.sh:/usr/local/bin/restore.sh:ro
+    networks:
+      - weekly_report_network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    command: |
+      sh -c "
+        echo '0 2 * * * /usr/local/bin/backup.sh' | crontab -
+        crond -f
+      "
+
+  # Monitoring với Prometheus (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: weekly_report_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - weekly_report_network
+    profiles:
+      - monitoring
+
+  # Grafana for monitoring (Optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: weekly_report_grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - weekly_report_network
+    profiles:
+      - monitoring
 
   # Redis for caching
   redis:
@@ -40,47 +241,35 @@ services:
     container_name: weekly_report_redis
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - weekly_report_network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # pgAdmin for database management
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: weekly_report_pgadmin
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@example.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
-    ports:
-      - "5050:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    networks:
-      - weekly_report_network
-    depends_on:
-      postgres:
-        condition: service_healthy
-    profiles:
-      - tools
-
 volumes:
-  postgres_data:
+  postgres_master_data:
+    driver: local
+  postgres_standby_1_data:
+    driver: local
+  postgres_standby_2_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
   redis_data:
-    driver: local
-  pgadmin_data:
     driver: local
 
 networks:
   weekly_report_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
