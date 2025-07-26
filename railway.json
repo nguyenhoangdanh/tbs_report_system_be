@@ -1,0 +1,16 @@
+{
+  "name": "weekly-report-backend",
+  "build": {
+    "buildCommand": "pnpm install && pnpm run build",
+    "startCommand": "pnpm run start:prod"
+  },
+  "environment": {
+    "NODE_ENV": "production",
+    "PORT": 8080
+  },
+  "region": "singapore",
+  "healthcheck": {
+    "path": "/health",
+    "timeout": 30
+  }
+}

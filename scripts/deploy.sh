@@ -10,8 +10,8 @@ NC='\033[0m'
 
 export PATH="/home/hoangdanh2000/.fly/bin:$PATH"
 
-echo -e "${BLUE}🚀 Deploy to Production (Singapore 512MB)${NC}"
-echo "=========================================="
+echo -e "${BLUE}🚀 Deploy to Production (Singapore 2GB Performance)${NC}"
+echo "================================================="
 
 # Check if we're in the right directory
 if [ ! -f "fly.toml" ]; then
@@ -26,6 +26,13 @@ if ! flyctl auth whoami >/dev/null 2>&1; then
     exit 1
 fi
 
+# Check if app exists
+if ! flyctl status -a weekly-report-backend >/dev/null 2>&1; then
+    echo -e "${RED}❌ App 'weekly-report-backend' not found${NC}"
+    echo -e "${BLUE}💡 Create app first: ./scripts/create-app.sh${NC}"
+    exit 1
+fi
+
 # Validate configuration
 echo -e "${BLUE}🔍 Validating fly.toml...${NC}"
 if ! flyctl config validate; then
@@ -33,60 +40,77 @@ if ! flyctl config validate; then
     exit 1
 fi
 
-# Check if .env.production exists
-if [ ! -f ".env.production" ]; then
-    echo -e "${RED}❌ .env.production not found${NC}"
-    echo -e "${BLUE}💡 Run database setup first: pnpm db:setup production${NC}"
-    exit 1
-fi
+# Build application
+echo -e "${BLUE}🏗️ Building application...${NC}"
+pnpm run build
 
-# Deploy with corrected flags (remove --region)
-echo -e "${BLUE}🏗️ Deploying to Singapore...${NC}"
-timeout 600 flyctl deploy --strategy immediate --primary-region sin || {
-    echo -e "${RED}❌ Deploy timed out or failed${NC}"
-    echo -e "${BLUE}💡 Try: pnpm fix-single${NC}"
-    exit 1
-}
+# Deploy with immediate strategy
+echo -e "${BLUE}🚀 Deploying to Singapore (performance CPU)...${NC}"
+flyctl deploy --strategy immediate
 
 # Wait for deployment
 echo -e "${BLUE}⏳ Waiting for deployment...${NC}"
 sleep 30
 
-# Apply cost optimization
-echo -e "${BLUE}💰 Optimizing costs (512MB RAM, 1 machine)...${NC}"
-flyctl scale memory 512 --yes
-flyctl scale count 1 --region sin
-
 # Health checks with retry
 echo -e "${BLUE}🏥 Running health checks...${NC}"
-for i in {1..10}; do
+for i in {1..15}; do
     if curl -f -s https://weekly-report-backend.fly.dev/health >/dev/null 2>&1; then
         echo -e "${GREEN}✅ Health check passed${NC}"
         break
     fi
-    if [ $i -eq 10 ]; then
-        echo -e "${RED}❌ Health check failed after 10 attempts${NC}"
+    if [ $i -eq 15 ]; then
+        echo -e "${RED}❌ Health check failed after 15 attempts${NC}"
         echo -e "${BLUE}🔍 Checking logs...${NC}"
-        flyctl logs --no-tail | tail -20
+        flyctl logs --no-tail | tail -30
         exit 1
     fi
-    echo -e "${YELLOW}⏳ Waiting for app... ($i/10)${NC}"
+    echo -e "${YELLOW}⏳ Waiting for app... ($i/15)${NC}"
     sleep 20
 done
 
+# Test all endpoints
+echo -e "${BLUE}🧪 Testing endpoints...${NC}"
+echo -n "  • Health endpoint: "
+if curl -f -s https://weekly-report-backend.fly.dev/health | grep -q "ok"; then
+    echo -e "${GREEN}✅${NC}"
+else
+    echo -e "${RED}❌${NC}"
+fi
+
+echo -n "  • API health: "
+if curl -f -s https://weekly-report-backend.fly.dev/api/health | grep -q "ok"; then
+    echo -e "${GREEN}✅${NC}"
+else
+    echo -e "${RED}❌${NC}"
+fi
+
+echo -n "  • Database health: "
+if curl -f -s https://weekly-report-backend.fly.dev/api/health/db | grep -q "status"; then
+    echo -e "${GREEN}✅${NC}"
+else
+    echo -e "${RED}❌${NC}"
+fi
+
 # Show final status
 echo -e "${BLUE}📋 Deployment Status:${NC}"
-flyctl status
+flyctl status -a weekly-report-backend
 
 echo -e "${GREEN}🎉 Deployment completed successfully!${NC}"
 echo -e "${BLUE}📊 Configuration:${NC}"
 echo "  • Region: Singapore (sin)"
-echo "  • Memory: 512MB"
+echo "  • CPU: Performance"
+echo "  • Memory: 2GB"
 echo "  • Machines: 1"
-echo "  • Monthly cost: ~$2"
+echo "  • Auto-stop: false (24/7)"
 echo ""
 echo -e "${BLUE}🔗 Endpoints:${NC}"
 echo "  • Backend: https://weekly-report-backend.fly.dev"
 echo "  • Health: https://weekly-report-backend.fly.dev/health"
 echo "  • API: https://weekly-report-backend.fly.dev/api/health"
 echo "  • DB Health: https://weekly-report-backend.fly.dev/api/health/db"
+echo ""
+echo -e "${BLUE}💡 Next steps:${NC}"
+echo "  1. Run migration: flyctl ssh console -a weekly-report-backend -C 'npx prisma migrate deploy'"
+echo "  2. Seed database: flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/seed.ts'"
+echo "  3. Import data: flyctl ssh console -a weekly-report-backend -C 'npx tsx prisma/import-all-data-from-excel.ts'"

@@ -77,10 +77,12 @@ async function bootstrap() {
       }
     }
 
+    // Essential: Enable shutdown hooks for proper cleanup
+    app.enableShutdownHooks();
+
     // Essential middleware
     app.use(cookieParser());
     app.set('trust proxy', 1);
-    app.enableShutdownHooks();
 
     const envConfig = app.get(EnvironmentConfig);
     const corsConfig = envConfig.getCorsConfig();
@@ -115,11 +117,9 @@ async function bootstrap() {
     console.log(`🍪 Credentials enabled: true`);
     console.log(`🔒 Cookie settings: secure=${envConfig.isProduction}, sameSite=${envConfig.isProduction ? 'none' : 'lax'}`);
 
-    // Global prefix for API routes (EXCLUDE health endpoints)
     app.setGlobalPrefix('api', {
       exclude: [
-        // { path: 'health', method: RequestMethod.GET },
-        { path: '', method: RequestMethod.GET }, // Root path
+        { path: '', method: RequestMethod.GET },
       ],
     });
 
@@ -178,20 +178,23 @@ async function bootstrap() {
 
     const port = envConfig.port || 8080;
 
-    // Graceful shutdown handling
-    process.on('SIGTERM', async () => {
-      console.log('📥 Received SIGTERM signal');
-      await app.close();
-      console.log('✅ Application closed gracefully');
-      process.exit(0);
-    });
+    // Enhanced graceful shutdown
+    const gracefulShutdown = async (signal: string) => {
+      console.log(`📥 Received ${signal} signal`);
+      console.log('🔄 Gracefully shutting down...');
+      
+      try {
+        await app.close();
+        console.log('✅ Application closed gracefully');
+        process.exit(0);
+      } catch (error) {
+        console.error('❌ Error during shutdown:', error);
+        process.exit(1);
+      }
+    };
 
-    process.on('SIGINT', async () => {
-      console.log('📥 Received SIGINT signal');
-      await app.close();
-      console.log('✅ Application closed gracefully');
-      process.exit(0);
-    });
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
     await app.listen(port, '0.0.0.0');
 
@@ -208,8 +211,7 @@ async function bootstrap() {
     if (process.env.NODE_ENV === 'production') {
       setTimeout(async () => {
         try {
-          const prismaService = app.get(PrismaService); // Fix: Use PrismaService directly
-          // await prismaService.testConnection();
+          const prismaService = app.get(PrismaService);
           console.log('✅ Database connection verified');
         } catch (error) {
           console.error('❌ Database connection failed:', error.message);

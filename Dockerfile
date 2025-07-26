@@ -1,18 +1,18 @@
-FROM node:18-alpine
+# Use Node.js 18 Alpine for smaller image size
+FROM node:18-alpine AS base
 
-# Install dependencies
-RUN apk add --no-cache libc6-compat
+# Install dependencies needed for Prisma and compilation
+RUN apk add --no-cache libc6-compat openssl
 
 # Install pnpm
 RUN npm install -g pnpm
 
-# Set working directory
 WORKDIR /app
 
 # Copy package files
 COPY package.json pnpm-lock.yaml* ./
 
-# Install dependencies
+# Install all dependencies (including dev dependencies for build)
 RUN pnpm install --frozen-lockfile
 
 # Copy prisma schema
@@ -27,14 +27,35 @@ COPY . .
 # Build the application
 RUN pnpm run build
 
-# Remove dev dependencies
-RUN pnpm prune --prod
+# Production stage
+FROM node:18-alpine AS production
 
-# Create non-root user
+# Install runtime dependencies
+RUN apk add --no-cache libc6-compat openssl
+
+# Install pnpm
+RUN npm install -g pnpm
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json pnpm-lock.yaml* ./
+
+# Install only production dependencies
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy prisma schema and generate client
+COPY prisma ./prisma/
+RUN npx prisma generate
+
+# Copy built application
+COPY --from=base /app/dist ./dist
+
+# Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Change ownership
+# Change ownership of app directory
 RUN chown -R nextjs:nodejs /app
 USER nextjs
 
