@@ -1,8 +1,14 @@
 {
   "name": "weekly-report-backend",
   "build": {
-    "buildCommand": "pnpm install && pnpm run build",
-    "startCommand": "pnpm run start:prod"
+    "builder": "NIXPACKS",
+    "buildCommand": "pnpm install && pnpm run build"
+  },
+  "deploy": {
+    "startCommand": "npm run start:prod",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ALWAYS"
   },
   "environment": {
     "NODE_ENV": "production",

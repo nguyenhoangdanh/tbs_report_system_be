@@ -4,22 +4,13 @@ FROM node:18-alpine AS base
 # Install dependencies needed for Prisma and compilation
 RUN apk add --no-cache libc6-compat openssl
 
-# Install pnpm
-RUN npm install -g pnpm
-
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
-
-# Generate pnpm-lock.yaml if it doesn't exist, then install dependencies
-RUN if [ ! -f pnpm-lock.yaml ]; then \
-        echo "Generating pnpm-lock.yaml..." && \
-        pnpm install --lockfile-only; \
-    fi
+COPY package.json package-lock.json* ./
 
 # Install all dependencies (including dev dependencies for build)
-RUN pnpm install --no-frozen-lockfile
+RUN npm ci
 
 # Copy prisma schema
 COPY prisma ./prisma/
@@ -31,7 +22,7 @@ RUN npx prisma generate
 COPY . .
 
 # Build the application
-RUN pnpm run build
+RUN npm run build
 
 # Production stage
 FROM node:18-alpine AS production
@@ -39,16 +30,13 @@ FROM node:18-alpine AS production
 # Install runtime dependencies
 RUN apk add --no-cache libc6-compat openssl
 
-# Install pnpm
-RUN npm install -g pnpm
-
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package.json package-lock.json* ./
 
-# Install only production dependencies without lockfile requirement
-RUN pnpm install --prod --no-frozen-lockfile
+# Install only production dependencies
+RUN npm ci --only=production
 
 # Copy prisma schema and generate client
 COPY prisma ./prisma/
