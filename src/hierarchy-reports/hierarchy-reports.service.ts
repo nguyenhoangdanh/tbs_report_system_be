@@ -1118,7 +1118,24 @@ export class HierarchyReportsService {
           include: {
             evaluations: {
               include: {
-                evaluator: true,
+                evaluator: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    jobPosition: {
+                      include: {
+                        position: {
+                          select: {
+                            id: true,
+                            name: true,
+                            description: true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -2135,12 +2152,12 @@ export class HierarchyReportsService {
       }
 
       // Level 5: Check if this is an Assistant role
-      if (level === 5) {
-        const isAssistant = this.isAssistantRole(position?.name);
-        if (isAssistant) {
-          return false; // Assistants have no viewing rights
-        }
-      }
+      // if (level === 5) {
+      //   const isAssistant = this.isAssistantRole(position?.name);
+      //   if (isAssistant) {
+      //     return false; // Assistants have no viewing rights
+      //   }
+      // }
 
       // Levels 1-6 (excluding Assistant at Level 5) have management permissions
       if (level >= 1 && level <= 6) {
@@ -2213,12 +2230,12 @@ export class HierarchyReportsService {
       }
 
       // Level 5: Check if this is an Assistant role
-      if (managerLevel === 5) {
-        const isAssistant = this.isAssistantRole(manager.jobPosition?.position?.name);
-        if (isAssistant) {
-          return []; // Assistants have no viewing rights
-        }
-      }
+      // if (managerLevel === 5) {
+      //   const isAssistant = this.isAssistantRole(manager.jobPosition?.position?.name);
+      //   if (isAssistant) {
+      //     return []; // Assistants have no viewing rights
+      //   }
+      // }
 
       // Determine target levels based on manager level
       const targetLevels = this.getTargetLevelsForManager(managerLevel);
@@ -2239,7 +2256,7 @@ export class HierarchyReportsService {
             position: {
               level: { in: targetLevels } // MUST be higher level (lower in hierarchy)
             },
-            ...departmentFilter // Add department filtering for same-level restrictions
+            // ...departmentFilter // Add department filtering for same-level restrictions
           }
         },
         include: {
@@ -2629,39 +2646,208 @@ export class HierarchyReportsService {
   /**
    * Group reports by Position and Job Position for frontend display
    */
-  private groupReportsByPositionAndJobPosition(subordinates: any[], reports: any[]) {
-    const positionGroups = new Map();
+  // private groupReportsByPositionAndJobPosition(subordinates: any[], reports: any[]) {
+  //   const positionGroups = new Map();
     
-    subordinates.forEach(subordinate => {
-      const position = subordinate.jobPosition?.position;
-      const jobPosition = subordinate.jobPosition;
-      const userReport = reports.find(r => r.userId === subordinate.id);
+  //   subordinates.forEach(subordinate => {
+  //     const position = subordinate.jobPosition?.position;
+  //     const jobPosition = subordinate.jobPosition;
+  //     const userReport = reports.find(r => r.userId === subordinate.id);
       
-      if (!position || !jobPosition) return;
+  //     if (!position || !jobPosition) return;
       
-      // Create position group key
-      const positionKey = `${position.id}_${position.name}_${position.level}`;
+  //     // Create position group key
+  //     const positionKey = `${position.id}_${position.name}_${position.level}`;
       
-      if (!positionGroups.has(positionKey)) {
-        positionGroups.set(positionKey, {
-          position: {
-            id: position.id,
-            name: position.name,
-            level: position.level,
-            description: position.description,
-            isManagement: position.isManagement
-          },
-          jobPositionGroups: new Map(),
+  //     if (!positionGroups.has(positionKey)) {
+  //       positionGroups.set(positionKey, {
+  //         position: {
+  //           id: position.id,
+  //           name: position.name,
+  //           level: position.level,
+  //           description: position.description,
+  //           isManagement: position.isManagement
+  //         },
+  //         jobPositionGroups: new Map(),
+  //         totalUsers: 0,
+  //         usersWithReports: 0,
+  //         usersWithCompletedReports: 0
+  //       });
+  //     }
+      
+  //     const positionGroup = positionGroups.get(positionKey);
+      
+  //     // Create job position group key
+  //     // const jobPositionKey = `${jobPosition.id}_${jobPosition.jobName}_${jobPosition.departmentId}`;
+  //     const jobPositionKey = `${jobPosition.id}_${jobPosition.jobName}_${jobPosition.departmentId}`;
+      
+  //     if (!positionGroup.jobPositionGroups.has(jobPositionKey)) {
+  //       positionGroup.jobPositionGroups.set(jobPositionKey, {
+  //         jobPosition: {
+  //           id: jobPosition.id,
+  //           jobName: jobPosition.jobName,
+  //           code: jobPosition.code,
+  //           description: jobPosition.description,
+  //           department: jobPosition.department,
+  //           position: position
+  //         },
+  //         employees: [],
+  //         stats: {
+  //           totalUsers: 0,
+  //           usersWithReports: 0,
+  //           usersWithCompletedReports: 0,
+  //           totalTasks: 0,
+  //           completedTasks: 0,
+  //           taskCompletionRate: 0
+  //         }
+  //       });
+  //     }
+      
+  //     // const jobPositionGroup = positionGroup.jobPositionGroups.get(jobPositionKey);
+  //     const jobPositionGroup = positionGroup.jobPositionGroups.get(jobPositionKey);
+  //     const stats = this.calculateSubordinateStats(subordinate, userReport);
+      
+  //     // Add employee to job position group
+  //     jobPositionGroup.employees.push({
+  //       user: {
+  //         id: subordinate.id,
+  //         employeeCode: subordinate.employeeCode,
+  //         firstName: subordinate.firstName,
+  //         lastName: subordinate.lastName,
+  //         fullName: `${subordinate.firstName} ${subordinate.lastName}`,
+  //         email: subordinate.email,
+  //         office: subordinate.office,
+  //         jobPosition: subordinate.jobPosition
+  //       },
+  //       report: userReport ? {
+  //         id: userReport.id,
+  //         weekNumber: userReport.weekNumber,
+  //         year: userReport.year,
+  //         isCompleted: userReport.isCompleted,
+  //         isLocked: userReport.isLocked,
+  //         createdAt: userReport.createdAt.toISOString(),
+  //         updatedAt: userReport.updatedAt.toISOString(),
+  //         tasks: userReport.tasks
+  //       } : null,
+  //       stats
+  //     });
+      
+  //     // Update job position group stats
+  //     jobPositionGroup.stats.totalUsers++;
+  //     if (stats.hasReport) {
+  //       jobPositionGroup.stats.usersWithReports++;
+  //       jobPositionGroup.stats.totalTasks += stats.totalTasks;
+  //       jobPositionGroup.stats.completedTasks += stats.completedTasks;
+  //     }
+  //     if (stats.isCompleted) {
+  //       jobPositionGroup.stats.usersWithCompletedReports++;
+  //     }
+      
+  //     // Update position group stats
+  //     positionGroup.totalUsers++;
+  //     if (stats.hasReport) {
+  //       positionGroup.usersWithReports++;
+  //     }
+  //     if (stats.isCompleted) {
+  //       positionGroup.usersWithCompletedReports++;
+  //     }
+  //   });
+
+  //   // Convert Maps to Arrays and calculate final stats
+  //   const result = Array.from(positionGroups.values()).map(positionGroup => {
+  //     const jobPositions = Array.from(positionGroup.jobPositionGroups.values()).map((jobPositionGroup: any) => {
+  //       // Calculate task completion rate for job position
+  //       jobPositionGroup.stats.taskCompletionRate = jobPositionGroup.stats.totalTasks > 0
+  //         ? Math.round((jobPositionGroup.stats.completedTasks / jobPositionGroup.stats.totalTasks) * 100)
+  //         : 0;
+        
+  //       return jobPositionGroup;
+  //     });
+
+  //     return {
+  //       ...positionGroup,
+  //       jobPositions: jobPositions.sort((a: any, b: any) => a.jobPosition.jobName.localeCompare(b.jobPosition.jobName))
+  //     };
+  //   });
+
+  //   // Sort by position level
+  //   return result.sort((a, b) => a.position.level - b.position.level);
+  // }
+
+
+  // Thay thế logic trong hàm groupReportsByPositionAndJobPosition
+  
+  
+  private groupReportsByPositionAndJobPosition(subordinates: any[], reports: any[]) {
+  const positionGroups = new Map();
+  
+  subordinates.forEach(subordinate => {
+    const position = subordinate.jobPosition?.position;
+    const jobPosition = subordinate.jobPosition;
+    const userReport = reports.find(r => r.userId === subordinate.id);
+    
+    if (!position || !jobPosition) return;
+    
+    // Create position group key
+    const positionKey = `${position.id}_${position.name}_${position.level}`;
+    
+    // Initialize position group if not exists
+    if (!positionGroups.has(positionKey)) {
+      positionGroups.set(positionKey, {
+        position: {
+          id: position.id,
+          name: position.name,
+          level: position.level,
+          description: position.description,
+          isManagement: position.isManagement
+        },
+        // For level 1-6: direct employees array
+        // For level 7: jobPositionGroups Map
+        employees: position.level < 7 ? [] : null,
+        jobPositionGroups: position.level === 7 ? new Map() : null,
+        stats: {
           totalUsers: 0,
           usersWithReports: 0,
-          usersWithCompletedReports: 0
-        });
-      }
-      
-      const positionGroup = positionGroups.get(positionKey);
-      
-      // Create job position group key
-      const jobPositionKey = `${jobPosition.id}_${jobPosition.jobName}_${jobPosition.departmentId}`;
+          usersWithCompletedReports: 0,
+          totalTasks: 0,
+          completedTasks: 0,
+          taskCompletionRate: 0
+        }
+      });
+    }
+    
+    const positionGroup = positionGroups.get(positionKey);
+    const stats = this.calculateSubordinateStats(subordinate, userReport);
+    
+    // Employee data structure
+    const employeeData = {
+      user: {
+        id: subordinate.id,
+        employeeCode: subordinate.employeeCode,
+        firstName: subordinate.firstName,
+        lastName: subordinate.lastName,
+        fullName: `${subordinate.firstName} ${subordinate.lastName}`,
+        email: subordinate.email,
+        office: subordinate.office,
+        jobPosition: subordinate.jobPosition
+      },
+      report: userReport ? {
+        id: userReport.id,
+        weekNumber: userReport.weekNumber,
+        year: userReport.year,
+        isCompleted: userReport.isCompleted,
+        isLocked: userReport.isLocked,
+        createdAt: userReport.createdAt.toISOString(),
+        updatedAt: userReport.updatedAt.toISOString(),
+        tasks: userReport.tasks
+      } : null,
+      stats
+    };
+    
+    // LOGIC PHÂN BIỆT THEO LEVEL
+    if (position.level === 7) {
+      // Level 7 (Nhân viên): Group theo job position chi tiết
+      const jobPositionKey = `${jobPosition.id}_${jobPosition.jobName}`;
       
       if (!positionGroup.jobPositionGroups.has(jobPositionKey)) {
         positionGroup.jobPositionGroups.set(jobPositionKey, {
@@ -2686,32 +2872,9 @@ export class HierarchyReportsService {
       }
       
       const jobPositionGroup = positionGroup.jobPositionGroups.get(jobPositionKey);
-      const stats = this.calculateSubordinateStats(subordinate, userReport);
       
       // Add employee to job position group
-      jobPositionGroup.employees.push({
-        user: {
-          id: subordinate.id,
-          employeeCode: subordinate.employeeCode,
-          firstName: subordinate.firstName,
-          lastName: subordinate.lastName,
-          fullName: `${subordinate.firstName} ${subordinate.lastName}`,
-          email: subordinate.email,
-          office: subordinate.office,
-          jobPosition: subordinate.jobPosition
-        },
-        report: userReport ? {
-          id: userReport.id,
-          weekNumber: userReport.weekNumber,
-          year: userReport.year,
-          isCompleted: userReport.isCompleted,
-          isLocked: userReport.isLocked,
-          createdAt: userReport.createdAt.toISOString(),
-          updatedAt: userReport.updatedAt.toISOString(),
-          tasks: userReport.tasks
-        } : null,
-        stats
-      });
+      jobPositionGroup.employees.push(employeeData);
       
       // Update job position group stats
       jobPositionGroup.stats.totalUsers++;
@@ -2724,20 +2887,34 @@ export class HierarchyReportsService {
         jobPositionGroup.stats.usersWithCompletedReports++;
       }
       
-      // Update position group stats
-      positionGroup.totalUsers++;
-      if (stats.hasReport) {
-        positionGroup.usersWithReports++;
-      }
-      if (stats.isCompleted) {
-        positionGroup.usersWithCompletedReports++;
-      }
-    });
+    } else {
+      // Level 1-6 (Các cấp quản lý): Chỉ group theo position
+      positionGroup.employees.push(employeeData);
+    }
+    
+    // Update position group stats (cho tất cả levels)
+    positionGroup.stats.totalUsers++;
+    if (stats.hasReport) {
+      positionGroup.stats.usersWithReports++;
+      positionGroup.stats.totalTasks += stats.totalTasks;
+      positionGroup.stats.completedTasks += stats.completedTasks;
+    }
+    if (stats.isCompleted) {
+      positionGroup.stats.usersWithCompletedReports++;
+    }
+  });
 
-    // Convert Maps to Arrays and calculate final stats
-    const result = Array.from(positionGroups.values()).map(positionGroup => {
+  // Convert Maps to Arrays and calculate final stats
+  const result = Array.from(positionGroups.values()).map(positionGroup => {
+    // Calculate task completion rate for position
+    positionGroup.stats.taskCompletionRate = positionGroup.stats.totalTasks > 0
+      ? Math.round((positionGroup.stats.completedTasks / positionGroup.stats.totalTasks) * 100)
+      : 0;
+    
+    if (positionGroup.position.level === 7) {
+      // Level 7: Convert jobPositionGroups Map to Array
       const jobPositions = Array.from(positionGroup.jobPositionGroups.values()).map((jobPositionGroup: any) => {
-        // Calculate task completion rate for job position
+        // Calculate task completion rate for each job position
         jobPositionGroup.stats.taskCompletionRate = jobPositionGroup.stats.totalTasks > 0
           ? Math.round((jobPositionGroup.stats.completedTasks / jobPositionGroup.stats.totalTasks) * 100)
           : 0;
@@ -2746,53 +2923,111 @@ export class HierarchyReportsService {
       });
 
       return {
-        ...positionGroup,
-        jobPositions: jobPositions.sort((a: any, b: any) => a.jobPosition.jobName.localeCompare(b.jobPosition.jobName))
+        position: positionGroup.position,
+        jobPositions: jobPositions.sort((a: any, b: any) => a.jobPosition.jobName.localeCompare(b.jobPosition.jobName)),
+        employees: null, // Level 7 không có employees trực tiếp
+        stats: positionGroup.stats
       };
-    });
+    } else {
+      // Level 1-6: Return with employees array
+      return {
+        position: positionGroup.position,
+        jobPositions: null, // Level 1-6 không có jobPositions
+        employees: positionGroup.employees.sort((a: any, b: any) => a.user.fullName.localeCompare(b.user.fullName)),
+        stats: positionGroup.stats
+      };
+    }
+  });
 
-    // Sort by position level
-    return result.sort((a, b) => a.position.level - b.position.level);
-  }
-
+  // Sort by position level (TGĐ -> PTGĐ -> GĐ -> ... -> NV)
+  return result.sort((a, b) => a.position.level - b.position.level);
+}
+  
   /**
    * Calculate manager summary from grouped data
    */
-  private calculateManagerSummaryFromGrouped(groupedData: any[]) {
-    let totalSubordinates = 0;
-    let subordinatesWithReports = 0;
-    let subordinatesWithCompletedReports = 0;
-    let totalTasks = 0;
-    let totalCompletedTasks = 0;
+  // private calculateManagerSummaryFromGrouped(groupedData: any[]) {
+  //   let totalSubordinates = 0;
+  //   let subordinatesWithReports = 0;
+  //   let subordinatesWithCompletedReports = 0;
+  //   let totalTasks = 0;
+  //   let totalCompletedTasks = 0;
 
-    groupedData.forEach(positionGroup => {
-      totalSubordinates += positionGroup.totalUsers;
-      subordinatesWithReports += positionGroup.usersWithReports;
-      subordinatesWithCompletedReports += positionGroup.usersWithCompletedReports;
+  //   groupedData.forEach(positionGroup => {
+  //     totalSubordinates += positionGroup.totalUsers;
+  //     subordinatesWithReports += positionGroup.usersWithReports;
+  //     subordinatesWithCompletedReports += positionGroup.usersWithCompletedReports;
 
+  //     positionGroup.jobPositions.forEach((jobPositionGroup: any) => {
+  //       totalTasks += jobPositionGroup.stats.totalTasks;
+  //       totalCompletedTasks += jobPositionGroup.stats.completedTasks;
+  //     });
+  //   });
+
+  //   const reportSubmissionRate = totalSubordinates > 0 ? Math.round((subordinatesWithReports / totalSubordinates) * 100) : 0;
+  //   const overallTaskCompletionRate = totalTasks > 0 ? Math.round((totalCompletedTasks / totalTasks) * 100) : 0;
+
+  //   return {
+  //     totalSubordinates,
+  //     subordinatesWithReports,
+  //     subordinatesWithoutReports: totalSubordinates - subordinatesWithReports,
+  //     subordinatesWithCompletedReports,
+  //     subordinatesWithIncompleteReports: subordinatesWithReports - subordinatesWithCompletedReports,
+  //     reportSubmissionRate,
+  //     totalTasks,
+  //     totalCompletedTasks,
+  //     overallTaskCompletionRate,
+  //     totalPositions: groupedData.length,
+  //     totalJobPositions: groupedData.reduce((sum, pg) => sum + pg.jobPositions.length, 0)
+  //   };
+  // }
+
+  /**
+ * Calculate manager summary from grouped data
+ */
+private calculateManagerSummaryFromGrouped(groupedData: any[]) {
+  let totalSubordinates = 0;
+  let subordinatesWithReports = 0;
+  let subordinatesWithCompletedReports = 0;
+  let totalTasks = 0;
+  let totalCompletedTasks = 0;
+  let totalJobPositions = 0;
+
+  groupedData.forEach(positionGroup => {
+    // Add stats from position group
+    totalSubordinates += positionGroup.stats.totalUsers;
+    subordinatesWithReports += positionGroup.stats.usersWithReports;
+    subordinatesWithCompletedReports += positionGroup.stats.usersWithCompletedReports;
+    totalTasks += positionGroup.stats.totalTasks;
+    totalCompletedTasks += positionGroup.stats.completedTasks;
+
+    // Handle job positions safely - check if they exist and are not null
+    if (positionGroup.jobPositions && Array.isArray(positionGroup.jobPositions)) {
+      totalJobPositions += positionGroup.jobPositions.length;
       positionGroup.jobPositions.forEach((jobPositionGroup: any) => {
-        totalTasks += jobPositionGroup.stats.totalTasks;
-        totalCompletedTasks += jobPositionGroup.stats.completedTasks;
+        // Additional stats are already included in position stats above
+        // so we don't double count here
       });
-    });
+    }
+  });
 
-    const reportSubmissionRate = totalSubordinates > 0 ? Math.round((subordinatesWithReports / totalSubordinates) * 100) : 0;
-    const overallTaskCompletionRate = totalTasks > 0 ? Math.round((totalCompletedTasks / totalTasks) * 100) : 0;
+  const reportSubmissionRate = totalSubordinates > 0 ? Math.round((subordinatesWithReports / totalSubordinates) * 100) : 0;
+  const overallTaskCompletionRate = totalTasks > 0 ? Math.round((totalCompletedTasks / totalTasks) * 100) : 0;
 
-    return {
-      totalSubordinates,
-      subordinatesWithReports,
-      subordinatesWithoutReports: totalSubordinates - subordinatesWithReports,
-      subordinatesWithCompletedReports,
-      subordinatesWithIncompleteReports: subordinatesWithReports - subordinatesWithCompletedReports,
-      reportSubmissionRate,
-      totalTasks,
-      totalCompletedTasks,
-      overallTaskCompletionRate,
-      totalPositions: groupedData.length,
-      totalJobPositions: groupedData.reduce((sum, pg) => sum + pg.jobPositions.length, 0)
-    };
-  }
+  return {
+    totalSubordinates,
+    subordinatesWithReports,
+    subordinatesWithoutReports: totalSubordinates - subordinatesWithReports,
+    subordinatesWithCompletedReports,
+    subordinatesWithIncompleteReports: subordinatesWithReports - subordinatesWithCompletedReports,
+    reportSubmissionRate,
+    totalTasks,
+    totalCompletedTasks,
+    overallTaskCompletionRate,
+    totalPositions: groupedData.length,
+    totalJobPositions
+  };
+}
 
   /**
    * Calculate manager summary statistics (Legacy method - kept for compatibility)

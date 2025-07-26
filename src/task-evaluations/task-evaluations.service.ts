@@ -50,8 +50,6 @@ export class TaskEvaluationsService {
       }
     });
 
-    console.log('Task for evaluation:', task);
-
     if (!task) {
       throw new NotFoundException('Task not found');
     }
@@ -525,9 +523,30 @@ export class TaskEvaluationsService {
       throw new ForbiddenException('Can only delete your own evaluations');
     }
 
-    await this.prisma.taskEvaluation.delete({
-      where: { id: evaluationId }
-    });
+    // await this.prisma.reportTask.update({
+    //   where: { id: evaluation.taskId },
+    //   data: {
+    //     isCompleted: evaluation.originalIsCompleted,
+    //     reasonNotDone: evaluation.originalReasonNotDone || null
+    //   }
+    // });
+
+    // await this.prisma.taskEvaluation.delete({
+    //   where: { id: evaluationId }
+    // });
+
+    await Promise.all([
+      this.prisma.reportTask.update({
+        where: { id: evaluation.taskId },
+        data: {
+          isCompleted: evaluation.originalIsCompleted,
+          reasonNotDone:  ""
+        }
+      }),
+      this.prisma.taskEvaluation.delete({
+        where: { id: evaluationId }
+      })
+    ]);
 
     return { message: 'Evaluation deleted successfully' };
   }
