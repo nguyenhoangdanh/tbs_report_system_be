@@ -31,7 +31,10 @@
     "open:railway": "railway open",
     "status:railway": "railway status",
     
-    "health:railway": "railway status | grep -o 'https://[^ ]*' | xargs -I {} curl -f {}/health"
+    "health:railway": "railway status | grep -o 'https://[^ ]*' | xargs -I {} curl -f {}/health",
+    "get:domain": "./scripts/get-domain.sh",
+    "test:endpoints": "./scripts/test-endpoints.sh",
+    "info:railway": "railway status && echo '' && railway domain"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.56.0",

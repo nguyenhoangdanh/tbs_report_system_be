@@ -10,10 +10,14 @@ const prisma = new PrismaClient({
   log: ['error', 'warn'],
 });
 
-async function createDefaultAdmin() {
+async function main() {
   try {
-    console.log('👤 Creating default admin account...');
-    
+    console.log('🌱 Starting database seeding...');
+
+    // Test connection first
+    await prisma.$connect();
+    console.log('✅ Database connected');
+
     // Check if admin already exists
     const existingAdmin = await prisma.user.findFirst({
       where: {
@@ -26,14 +30,13 @@ async function createDefaultAdmin() {
     });
 
     if (existingAdmin) {
-      console.log('⚠️  Admin account already exists:');
+      console.log('⚠️ Admin account already exists');
       console.log(`   Employee Code: ${existingAdmin.employeeCode}`);
       console.log(`   Email: ${existingAdmin.email}`);
-      console.log(`   Role: ${existingAdmin.role}`);
-      return existingAdmin;
+      return;
     }
 
-    // Create office first
+    // Create office
     const office = await prisma.office.upsert({
       where: { name: 'VP Điều Hành' },
       update: {},
@@ -70,7 +73,7 @@ async function createDefaultAdmin() {
         level: 0,
         priority: 0,
         isManagement: true,
-        isReportable: false, // CEO không cần nộp báo cáo
+        isReportable: false,
         canViewHierarchy: true,
       },
     });
@@ -95,10 +98,9 @@ async function createDefaultAdmin() {
       },
     });
 
-    // Hash password
+    // Create admin user
     const hashedPassword = await bcrypt.hash('admin123456', 10);
 
-    // Create admin user
     const admin = await prisma.user.create({
       data: {
         employeeCode: 'ADMIN001',
@@ -114,101 +116,22 @@ async function createDefaultAdmin() {
       },
     });
 
-    console.log('✅ Default admin account created successfully:');
+    console.log('✅ Admin account created successfully:');
     console.log(`   Employee Code: ${admin.employeeCode}`);
     console.log(`   Email: ${admin.email}`);
     console.log(`   Password: admin123456`);
     console.log(`   Role: ${admin.role}`);
-    console.log(`   Name: ${admin.firstName} ${admin.lastName}`);
-
-    return admin;
 
   } catch (error) {
-    console.error('❌ Failed to create admin account:', error.message);
+    console.error('❌ Seeding failed:', error.message);
     throw error;
-  }
-}
-
-async function createSampleData() {
-  try {
-    console.log('📊 Creating sample organizational data...');
-
-    // Create additional office
-    const factory = await prisma.office.upsert({
-      where: { name: 'Nhà máy sản xuất' },
-      update: {},
-      create: {
-        name: 'Nhà máy sản xuất',
-        type: OfficeType.FACTORY_OFFICE,
-        description: 'Nhà máy sản xuất chính',
-      },
-    });
-
-    // Create sample positions
-    const positions = [
-      { name: 'GĐ', description: 'Giám Đốc', level: 1, isManagement: true, canViewHierarchy: true, isReportable: true },
-      { name: 'PGĐ', description: 'Phó Giám Đốc', level: 2, isManagement: true, canViewHierarchy: true, isReportable: true },
-      { name: 'TP', description: 'Trưởng Phòng', level: 3, isManagement: true, canViewHierarchy: true, isReportable: true },
-      { name: 'NV', description: 'Nhân viên', level: 10, isManagement: false, canViewHierarchy: false, isReportable: true },
-    ];
-
-    for (const pos of positions) {
-      await prisma.position.upsert({
-        where: { name: pos.name },
-        update: {},
-        create: {
-          name: pos.name,
-          description: pos.description,
-          level: pos.level,
-          priority: 0,
-          isManagement: pos.isManagement,
-          isReportable: pos.isReportable,
-          canViewHierarchy: pos.canViewHierarchy,
-        },
-      });
-    }
-
-    console.log('✅ Sample data created successfully');
-
-  } catch (error) {
-    console.error('❌ Failed to create sample data:', error.message);
-    throw error;
-  }
-}
-
-async function main() {
-  try {
-    console.log('🌱 Starting database seeding...');
-    console.log('===============================');
-
-    // Test connection
-    await prisma.$connect();
-    console.log('✅ Database connected');
-
-    // Create admin account
-    await createDefaultAdmin();
-
-    // Create sample organizational data
-    await createSampleData();
-
-    console.log('\n🎉 Database seeding completed successfully!');
-    console.log('\n📋 Summary:');
-    console.log('   ✅ Default admin account created');
-    console.log('   ✅ Basic organizational structure created');
-    console.log('   ✅ Sample positions created');
-    
-    console.log('\n🔐 Admin Login Credentials:');
-    console.log('   Email: admin@tbsgroup.vn');
-    console.log('   Password: admin123456');
-    console.log('   Employee Code: ADMIN001');
-
-  } catch (error) {
-    console.error('\n❌ Seeding failed:', error.message);
-    console.error('Stack trace:', error.stack);
-    process.exit(1);
   } finally {
     await prisma.$disconnect();
   }
 }
 
-main();
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });

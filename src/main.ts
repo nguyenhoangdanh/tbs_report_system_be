@@ -119,7 +119,8 @@ async function bootstrap() {
 
     app.setGlobalPrefix('api', {
       exclude: [
-        { path: '', method: RequestMethod.GET },
+        { path: '', method: RequestMethod.GET }, // Root path
+        { path: 'health', method: RequestMethod.GET }, // Health endpoint for Railway
       ],
     });
 
