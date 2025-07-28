@@ -1,6 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
 import { PrismaService } from './common/prisma.service';
+import { Public } from './common/decorators/public.decorator';
 
 @Controller()
 export class AppController {
@@ -25,6 +26,7 @@ export class AppController {
     };
   }
 
+  @Public()
   @Get('health')
   async getHealth() {
     try {
@@ -55,11 +57,13 @@ export class AppController {
     }
   }
 
+  @Public()
   @Get('api/health')
   async getApiHealth() {
     return this.getHealth();
   }
 
+  @Public()
   @Get('api/health/db')
   async getDatabaseHealth() {
     try {
