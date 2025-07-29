@@ -45,17 +45,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: any) {
     try {
-      // Enhanced logging for production debugging
-      if (this.envConfig.isProduction) {
-        this.logger.log('JWT Validation Debug:', {
-          userId: payload.sub,
-          employeeCode: payload.employeeCode,
-          role: payload.role,
-          exp: payload.exp,
-          iat: payload.iat,
-          isExpired: payload.exp < Math.floor(Date.now() / 1000),
-        });
-      }
 
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
@@ -88,13 +77,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
 
       const { password, ...userWithoutPassword } = user;
-
-      if (this.envConfig.isProduction) {
-        this.logger.log('JWT Validation Success:', {
-          userId: user.id,
-          employeeCode: user.employeeCode,
-        });
-      }
 
       return userWithoutPassword;
     } catch (error) {
