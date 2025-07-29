@@ -213,7 +213,8 @@ export class AuthService {
       }
 
       if (!user) {
-        throw new UnauthorizedException('Invalid credentials');
+        // throw new UnauthorizedException('Invalid credentials');
+        throw new BadRequestException('Thông tin đăng nhập không chính xác');
       }
 
       // if (!user.isActive) {
@@ -230,7 +231,8 @@ export class AuthService {
         if (process.env.NODE_ENV !== 'production') {
           this.logger.warn(`Login failed for ${employeeCode}: Invalid password`);
         }
-        throw new UnauthorizedException('Invalid credentials');
+        // throw new UnauthorizedException('Invalid credentials');
+        throw new BadRequestException('Mật khẩu không chính xác');
       }
 
       // Generate JWT token with explicit secret logging for debugging
@@ -302,7 +304,8 @@ export class AuthService {
       user.password,
     );
     if (!isCurrentPasswordValid) {
-      throw new UnauthorizedException('Current password is incorrect');
+      // throw new UnauthorizedException('Current password is incorrect');
+      throw new BadRequestException('Mật khẩu hiện tại không chính xác');
     }
 
     const hashedNewPassword = await bcrypt.hash(newPassword, 10);

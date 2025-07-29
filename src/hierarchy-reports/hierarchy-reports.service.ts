@@ -695,11 +695,12 @@ export class HierarchyReportsService {
   }
 
   private calculateRanking(completionRate: number): string {
-    if (completionRate >= 100) return 'EXCELLENT';
-    if (completionRate >= 95) return 'GOOD';
-    if (completionRate >= 90) return 'AVERAGE';
-    if (completionRate >= 85) return 'POOR';
-    return 'FAIL';
+    if (completionRate > 90) return 'EXCELLENT';
+    if (completionRate >= 80) return 'GOOD';
+    if (completionRate >= 70) return 'AVERAGE';
+    return 'POOR';
+    // if (completionRate >= 60) return 'POOR';
+    // return 'FAIL';
   }
 
   private calculateRankingDistribution(completionRates: number[]) {
@@ -708,7 +709,7 @@ export class HierarchyReportsService {
       good: 0,
       average: 0,
       poor: 0,
-      fail: 0
+      // fail: 0
     };
 
     completionRates.forEach(rate => {
@@ -726,8 +727,8 @@ export class HierarchyReportsService {
         case 'POOR':
           distribution.poor++;
           break;
-        case 'FAIL':
-          distribution.fail++;
+        // case 'FAIL':
+        //   distribution.fail++;
           break;
       }
     });
@@ -738,7 +739,7 @@ export class HierarchyReportsService {
       good: { count: distribution.good, percentage: total > 0 ? Math.round((distribution.good / total) * 100) : 0 },
       average: { count: distribution.average, percentage: total > 0 ? Math.round((distribution.average / total) * 100) : 0 },
       poor: { count: distribution.poor, percentage: total > 0 ? Math.round((distribution.poor / total) * 100) : 0 },
-      fail: { count: distribution.fail, percentage: total > 0 ? Math.round((distribution.fail / total) * 100) : 0 }
+      // fail: { count: distribution.fail, percentage: total > 0 ? Math.round((distribution.fail / total) * 100) : 0 }
     };
   }
 

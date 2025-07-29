@@ -57,7 +57,7 @@ import { join } from 'path';
   controllers: [AppController],
   providers: [
     AppService,
-    PrismaService, // Fix: Remove the complex provider object
+    PrismaService,
     EnvironmentConfig,
     {
       provide: APP_GUARD,

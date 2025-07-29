@@ -364,11 +364,15 @@ export class UsersService {
 
   // Helper methods for ranking calculations - Updated thresholds
   private calculateEmployeeRanking(completionRate: number): string {
-    if (completionRate >= 100) return 'EXCELLENT';
-    if (completionRate >= 95) return 'GOOD';
-    if (completionRate >= 90) return 'AVERAGE';
-    if (completionRate >= 85) return 'POOR';
-    return 'FAIL';
+    // if (completionRate >= 100) return 'EXCELLENT';
+    // if (completionRate >= 95) return 'GOOD';
+    // if (completionRate >= 90) return 'AVERAGE';
+    // if (completionRate >= 85) return 'POOR';
+    // return 'FAIL';
+    if (completionRate > 90) return 'EXCELLENT';
+    if (completionRate >= 80) return 'GOOD';
+    if (completionRate >= 70) return 'AVERAGE';
+    return 'POOR';
   }
 
   private getRankingLabel(ranking: string): string {
@@ -377,7 +381,7 @@ export class UsersService {
       'GOOD': 'Tốt',
       'AVERAGE': 'Trung bình',
       'POOR': 'Yếu',
-      'FAIL': 'Kém'
+      // 'FAIL': 'Kém'
     };
     return labels[ranking] || 'Chưa xếp loại';
   }

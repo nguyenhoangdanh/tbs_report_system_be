@@ -25,9 +25,8 @@ async function bootstrap() {
     console.log('🔍 Environment configuration:');
     console.log(`   NODE_ENV: ${process.env.NODE_ENV}`);
     console.log(`   PORT: ${process.env.PORT || '8080'}`);
-    console.log(`   Expected env file: .env.${nodeEnv}`);
 
-    // Log database URL (masked) for debugging
+    // Log database connection info (masked)
     if (process.env.DATABASE_URL) {
       const maskedUrl = process.env.DATABASE_URL.replace(
         /\/\/([^:]+):([^@]+)@/,
@@ -35,28 +34,23 @@ async function bootstrap() {
       );
       console.log(`📡 Database URL: ${maskedUrl}`);
 
-      // Check database type
-      if (maskedUrl.includes('localhost') || maskedUrl.includes('127.0.0.1')) {
+      if (maskedUrl.includes('neon.tech')) {
+        console.log('🌐 Using Neon PostgreSQL (Serverless)');
+        console.log('💡 Note: Neon databases may cold-start, expect 1-2s initial delay');
+      } else if (maskedUrl.includes('localhost')) {
         console.log('✅ Using local database (development)');
-      } else if (
-        maskedUrl.includes('flycast') ||
-        maskedUrl.includes('fly.dev')
-      ) {
-        console.log('🌐 Using production database (Fly.io)');
       } else {
         console.log('🔍 Using external database');
       }
-    } else {
-      console.log('❌ DATABASE_URL not configured');
     }
 
-    // Database connection retry with exponential backoff
-    const maxRetries = 5;
+    // Enhanced app creation with database retry
     let app: NestExpressApplication;
+    const maxAppRetries = 3;
     
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    for (let attempt = 1; attempt <= maxAppRetries; attempt++) {
       try {
-        console.log(`🔄 Creating app instance (attempt ${attempt}/${maxRetries})...`);
+        console.log(`🔄 Creating app instance (attempt ${attempt}/${maxAppRetries})...`);
         app = await NestFactory.create<NestExpressApplication>(AppModule, {
           logger:
             process.env.NODE_ENV === 'production'
@@ -67,11 +61,15 @@ async function bootstrap() {
         console.log('✅ App instance created successfully');
         break;
       } catch (error) {
-        console.error(`❌ Failed to create app (attempt ${attempt}/${maxRetries}):`, error.message);
-        if (attempt === maxRetries) {
+        console.error(`❌ Failed to create app (attempt ${attempt}/${maxAppRetries}):`, error.message);
+        if (attempt === maxAppRetries) {
+          if (error.message?.includes('database server')) {
+            console.error('💡 Database connection failed. Check Neon database status at https://neon.tech/status');
+            console.error('💡 Or verify your DATABASE_URL credentials in the Neon console');
+          }
           throw error;
         }
-        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+        const delay = 5000 * attempt; // 5s, 10s, 15s
         console.log(`⏳ Retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
@@ -208,21 +206,31 @@ async function bootstrap() {
       console.log(`📚 API documentation: http://0.0.0.0:${port}/api`);
     }
     
-    // Test database connection after startup
-    if (process.env.NODE_ENV === 'production') {
-      setTimeout(async () => {
-        try {
-          const prismaService = app.get(PrismaService);
-          console.log('✅ Database connection verified');
-        } catch (error) {
-          console.error('❌ Database connection failed:', error.message);
+    // Test database connection after startup with retry
+    setTimeout(async () => {
+      try {
+        const prismaService = app.get(PrismaService);
+        const isHealthy = await prismaService.isHealthy();
+        if (isHealthy) {
+          console.log('✅ Database connection verified and healthy');
+        } else {
+          console.log('⚠️ Database connection unstable, but app is running');
         }
-      }, 5000);
-    }
+      } catch (error) {
+        console.error('❌ Database verification failed:', error.message);
+        console.error('💡 App will continue running, but database operations may fail');
+      }
+    }, 3000);
     
   } catch (error) {
     console.error('❌ Failed to start application:', error);
-    console.error('Stack trace:', error.stack);
+    if (error.message?.includes('database server')) {
+      console.error('\n🔧 Troubleshooting tips:');
+      console.error('1. Check if Neon database is active: https://console.neon.tech/');
+      console.error('2. Verify DATABASE_URL in your .env file');
+      console.error('3. Check Neon service status: https://neon.tech/status');
+      console.error('4. Ensure your IP is not blocked by Neon');
+    }
     process.exit(1);
   }
 }
