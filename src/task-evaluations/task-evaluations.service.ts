@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { Role, EvaluationType } from '@prisma/client';
+import { tr } from 'date-fns/locale';
 
 interface CreateEvaluationDto {
   taskId: string;
@@ -492,7 +493,8 @@ export class TaskEvaluationsService {
 
       // Must be from a subordinate (higher level number)
       if (taskUser.jobPosition.position.level <= position.level) {
-        throw new ForbiddenException('Can only evaluate tasks from subordinates');
+        // throw new ForbiddenException('Can only evaluate tasks from subordinates with lower position level');
+        throw new ForbiddenException('Chỉ có thể đánh giá nhiệm vụ của cấp dưới có cấp bậc thấp hơn');
       }
 
       return;

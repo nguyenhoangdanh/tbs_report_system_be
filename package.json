@@ -17,10 +17,21 @@
     
     "db:generate": "npx prisma generate",
     "db:studio": "dotenv -e .env.local -- npx prisma studio",
+    "db:studio:prod": "dotenv -e .env.production -- npx prisma studio",
     
-    "local:setup": "./fix-database.sh",
+    "local:setup": "dotenv -e .env.local -- npx prisma generate && dotenv -e .env.local -- npx prisma migrate reset --force --skip-seed",
     "local:import": "dotenv -e .env.local -- npx tsx prisma/import-all-data-from-excel.ts",
     "local:seed": "dotenv -e .env.local -- npx tsx prisma/seed.ts",
+    "local:migrate": "dotenv -e .env.local -- npx prisma migrate dev",
+    "local:migrate:reset": "dotenv -e .env.local -- npx prisma migrate reset --force",
+    "local:db:push": "dotenv -e .env.local -- npx prisma db push",
+    
+    "prod:setup": "dotenv -e .env.production -- npx prisma generate && dotenv -e .env.production -- npx prisma migrate deploy",
+    "prod:import": "dotenv -e .env.production -- npx tsx prisma/import-all-data-from-excel.ts",
+    "prod:seed": "dotenv -e .env.production -- npx tsx prisma/seed.ts",
+    "prod:migrate": "dotenv -e .env.production -- npx prisma migrate deploy",
+    "prod:db:push": "dotenv -e .env.production -- npx prisma db push",
+    "prod:migrate:status": "dotenv -e .env.production -- npx prisma migrate status",
     
     "deploy:prod": "./scripts/deploy.sh",
     "deploy:quick": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl deploy --strategy immediate",
@@ -34,7 +45,12 @@
     "health:railway": "railway status | grep -o 'https://[^ ]*' | xargs -I {} curl -f {}/health",
     "get:domain": "./scripts/get-domain.sh",
     "test:endpoints": "./scripts/test-endpoints.sh",
-    "info:railway": "railway status && echo '' && railway domain"
+    "info:railway": "railway status && echo '' && railway domain",
+    
+    "db:backup:local": "dotenv -e .env.local -- pg_dump $DATABASE_URL > backup_local_$(date +%Y%m%d_%H%M%S).sql",
+    "db:backup:prod": "dotenv -e .env.production -- pg_dump $DATABASE_URL > backup_prod_$(date +%Y%m%d_%H%M%S).sql",
+    "db:restore:local": "dotenv -e .env.local -- psql $DATABASE_URL < ",
+    "db:restore:prod": "dotenv -e .env.production -- psql $DATABASE_URL < "
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.56.0",

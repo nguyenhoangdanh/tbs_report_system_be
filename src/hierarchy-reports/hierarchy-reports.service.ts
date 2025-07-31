@@ -375,69 +375,203 @@ export class HierarchyReportsService {
   }
 
   // Updated buildUserAccessFilter to support recursive subordinate access
-  private async buildUserAccessFilter(userId: string, userRole: Role) {
-    if (userRole === Role.SUPERADMIN || userRole === Role.ADMIN) {
-      // SUPERADMIN và ADMIN có thể xem tất cả
-      return {};
-    }
-    
-    if (userRole === Role.USER) {
-      // Lấy thông tin user để xác định cấp độ
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        include: {
-          jobPosition: {
-            include: {
-              position: true,
-              department: true
-            }
-          }
-        }
-      });
-
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
-
-      // Nếu user có position.canViewHierarchy = true và là management
-      if (user.jobPosition?.position?.canViewHierarchy === true) {
-        if (user.jobPosition?.position?.isManagement) {
-          // Management user có thể xem tất cả subordinates (recursive)
-          // Get all subordinate user IDs
-          const subordinates = await this.getAllSubordinatesRecursively(user);
-          const subordinateIds = subordinates.map(sub => sub.id);
-          
-          if (subordinateIds.length > 0) {
-            return {
-              id: { in: subordinateIds }
-            };
-          } else {
-            // If no subordinates, return impossible condition
-            return { id: 'no-subordinates' };
-          }
-        } else {
-          // Non-management user with canViewHierarchy - xem trong cùng department
-          return {
-            jobPosition: {
-              departmentId: user.jobPosition.departmentId
-            }
-          };
-        }
-      } else {
-        // Regular user chỉ có thể xem đồng nghiệp cùng cấp trong department
-        return {
-          jobPosition: {
-            departmentId: user.jobPosition.departmentId,
-            position: {
-              isManagement: false // CHỈ xem non-management positions
-            }
-          }
-        };
-      }
-    }
-    
+  /**
+ * ENHANCED: Build user access filter with department management support
+ */
+private async buildUserAccessFilter(userId: string, userRole: Role) {
+  if (userRole === Role.SUPERADMIN || userRole === Role.ADMIN) {
     return {};
   }
+  
+  if (userRole === Role.USER) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        jobPosition: {
+          include: {
+            position: true,
+            department: true
+          }
+        },
+        managedDepartments: {
+          where: { isActive: true },
+          include: {
+            department: true
+          }
+        }
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const position = user.jobPosition?.position;
+    const userLevel = position?.level || 999;
+    const userDepartmentId = user.jobPosition?.departmentId;
+    const managedDepartmentIds = user.managedDepartments.map(md => md.departmentId);
+
+    // Build access conditions
+    const accessConditions = [];
+
+    // 1. Direct department management (UserDepartmentManagement)
+    if (managedDepartmentIds.length > 0) {
+      accessConditions.push({
+        jobPosition: {
+          departmentId: { in: managedDepartmentIds }
+        }
+      });
+    }
+
+    // 2. Hierarchical management within same department
+    if (userDepartmentId && position?.canViewHierarchy) {
+      accessConditions.push({
+        AND: [
+          { jobPosition: { departmentId: userDepartmentId } },
+          { jobPosition: { position: { level: { gt: userLevel } } } }
+        ]
+      });
+    }
+
+    // 3. Same department colleagues (for non-management)
+    if (!position?.canViewHierarchy) {
+      accessConditions.push({
+        AND: [
+          { jobPosition: { departmentId: userDepartmentId } },
+          { jobPosition: { position: { isManagement: false } } }
+        ]
+      });
+    }
+
+    if (accessConditions.length > 0) {
+      return { OR: accessConditions };
+    } else {
+      return { id: 'no-access' };
+    }
+  }
+  
+  return {};
+}
+
+/**
+ * ENHANCED: Get subordinates with department management support
+ */
+private async getSubordinates(manager: any, userRole: Role) {
+  if (userRole === Role.ADMIN || userRole === Role.SUPERADMIN) {
+    return await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        id: { not: manager.id }
+      },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: { include: { office: true } }
+          }
+        }
+      },
+      orderBy: [
+        { jobPosition: { position: { level: 'asc' } } },
+        { jobPosition: { department: { name: 'asc' } } },
+        { lastName: 'asc' }, { firstName: 'asc' }
+      ]
+    });
+  }
+
+  if (userRole === Role.USER) {
+    // Get manager's information with managed departments
+    const managerWithDepartments = await this.prisma.user.findUnique({
+      where: { id: manager.id },
+      include: {
+        jobPosition: {
+          include: {
+            position: true,
+            department: true
+          }
+        },
+        managedDepartments: {
+          where: { isActive: true },
+          select: { departmentId: true }
+        }
+      }
+    });
+
+    if (!managerWithDepartments) {
+      return [];
+    }
+
+    const position = managerWithDepartments.jobPosition?.position;
+    const managerLevel = position?.level || 999;
+    const managerDepartmentId = managerWithDepartments.jobPosition?.departmentId;
+    const managedDepartmentIds = managerWithDepartments.managedDepartments.map(md => md.departmentId);
+
+    // Build subordinates query conditions
+    const subordinateConditions = [];
+
+    // 1. Users in directly managed departments
+    if (managedDepartmentIds.length > 0) {
+      subordinateConditions.push({
+        jobPosition: {
+          departmentId: { in: managedDepartmentIds }
+        }
+      });
+    }
+
+    // 2. Hierarchical subordinates in same department
+    if (managerDepartmentId && position?.canViewHierarchy) {
+      const targetLevels = this.getTargetLevelsForManager(managerLevel);
+      if (targetLevels.length > 0) {
+        subordinateConditions.push({
+          AND: [
+            { jobPosition: { departmentId: managerDepartmentId } },
+            { jobPosition: { position: { level: { in: targetLevels } } } }
+          ]
+        });
+      }
+    }
+
+    // 3. Same department colleagues (for non-management)
+    if (!position?.canViewHierarchy && managerDepartmentId) {
+      subordinateConditions.push({
+        AND: [
+          { jobPosition: { departmentId: managerDepartmentId } },
+          { jobPosition: { position: { isManagement: false } } }
+        ]
+      });
+    }
+
+    if (subordinateConditions.length === 0) {
+      return [];
+    }
+
+    return await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        id: { not: manager.id },
+        officeId: managerWithDepartments.officeId, // Same office constraint
+        OR: subordinateConditions
+      },
+      include: {
+        office: true,
+        jobPosition: {
+          include: {
+            position: true,
+            department: { include: { office: true } }
+          }
+        }
+      },
+      orderBy: [
+        { jobPosition: { position: { level: 'asc' } } },
+        { jobPosition: { department: { name: 'asc' } } },
+        { lastName: 'asc' }, { firstName: 'asc' }
+      ]
+    });
+  }
+
+  return [];
+}
 
   /**
    * Get hierarchy view based on user role and permissions
@@ -2186,135 +2320,12 @@ export class HierarchyReportsService {
    * - Level 2 (Giám Đốc): Views levels 3,4,5,6,7  
    * - Level 3 (Phó Giám đốc): Views levels 4,5,6,7
    * - Level 4 (Đội trưởng/Trưởng Line/Trưởng phòng): Views levels 5,6,7
-   * - Level 5 (Trưởng Team/Trưởng ca/Trợ lý): Views levels 6,7 (Trợ lý may see none)
+   * - Level 5 (Trưởng Team/Trưởng ca/Trợ lý): Views levels 6,7
+   *   * Special case: Trợ lý (Assistant) has NO viewing rights
    * - Level 6 (Tổ trưởng): Views level 7
    * - Level 7 (Nhân viên): NO permission
    */
-  private async getSubordinates(manager: any, userRole: Role) {
-    const managerLevel = manager.jobPosition?.position?.level;
-    const managerOfficeId = manager.officeId;
-
-    // ADMIN Role: Tổng Giám Đốc can view ALL employees system-wide
-    if (userRole === Role.ADMIN) {
-      return await this.prisma.user.findMany({
-        where: {
-          isActive: true,
-          id: { not: manager.id }
-        },
-        include: {
-          office: true,
-          jobPosition: {
-            include: {
-              position: true,
-              department: {
-                include: {
-                  office: true
-                }
-              }
-            }
-          }
-        },
-        orderBy: [
-          { jobPosition: { position: { level: 'asc' } } },
-          { jobPosition: { department: { name: 'asc' } } },
-          { lastName: 'asc' },
-          { firstName: 'asc' }
-        ]
-      });
-    }
-
-    // USER Role: Office-based + Level-based filtering
-    if (userRole === Role.USER) {
-      // Level 7 (Nhân viên): NO permission to view others' reports
-      if (managerLevel >= 7) {
-        return [];
-      }
-
-      // Level 5: Check if this is an Assistant role
-      // if (managerLevel === 5) {
-      //   const isAssistant = this.isAssistantRole(manager.jobPosition?.position?.name);
-      //   if (isAssistant) {
-      //     return []; // Assistants have no viewing rights
-      //   }
-      // }
-
-      // Determine target levels based on manager level
-      const targetLevels = this.getTargetLevelsForManager(managerLevel);
-      
-      if (targetLevels.length === 0) {
-        return [];
-      }
-
-      // Query users with same office_id, target levels, and department restrictions
-      const departmentFilter = this.getDepartmentFilterForLevel(managerLevel, manager.jobPosition?.departmentId);
-      
-      return await this.prisma.user.findMany({
-        where: {
-          isActive: true,
-          id: { not: manager.id },
-          officeId: managerOfficeId, // MUST be same office
-          jobPosition: {
-            position: {
-              level: { in: targetLevels } // MUST be higher level (lower in hierarchy)
-            },
-            // ...departmentFilter // Add department filtering for same-level restrictions
-          }
-        },
-        include: {
-          office: true,
-          jobPosition: {
-            include: {
-              position: true,
-              department: {
-                include: {
-                  office: true
-                }
-              }
-            }
-          }
-        },
-        orderBy: [
-          { jobPosition: { position: { level: 'asc' } } },
-          { jobPosition: { department: { name: 'asc' } } },
-          { lastName: 'asc' },
-          { firstName: 'asc' }
-        ]
-      });
-    }
-
-    // SUPERADMIN fallback
-    if (userRole === Role.SUPERADMIN) {
-      return await this.prisma.user.findMany({
-        where: {
-          isActive: true,
-          id: { not: manager.id }
-        },
-        include: {
-          office: true,
-          jobPosition: {
-            include: {
-              position: true,
-              department: {
-                include: {
-                  office: true
-                }
-              }
-            }
-          }
-        },
-        orderBy: [
-          { jobPosition: { position: { level: 'asc' } } },
-          { jobPosition: { department: { name: 'asc' } } },
-          { lastName: 'asc' },
-          { firstName: 'asc' }
-        ]
-      });
-    }
-
-    return [];
-  }
-
-  /**
+    /**
    * Get target levels that a manager can view based on their level
    */
   private getTargetLevelsForManager(managerLevel: number): number[] {

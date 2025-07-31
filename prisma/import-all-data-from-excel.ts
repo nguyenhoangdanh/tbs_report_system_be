@@ -59,8 +59,11 @@ interface ExcelRow {
   pb: string;      // Phòng ban (E)
   tt: string;      // Trực thuộc (F)
   phone?: string;  // Phone (G)
-  email?: string;  // Email (H)
-  role?: string;   // Role (I)
+  managementLevel1?: string; // Cán bộ quản lý trực tiếp Cấp 1 (H)
+  managementLevel2?: string; // Cán bộ quản lý trực tiếp Cấp 2 (I)
+  managementLevel3?: string; // Cán bộ quản lý trực tiếp Cấp 3 (J)
+  email?: string;  // Email (K - moved down)
+  role?: string;   // Role (L - moved down)
 }
 
 interface ProcessedData {
@@ -69,6 +72,11 @@ interface ProcessedData {
   positions: Set<string>;
   jobPositions: Map<string, { cd: string; vt: string; pb: string; tt: string }>;
   users: ExcelRow[];
+  managementRelations: Array<{
+    userMsnv: string;
+    managerMsnv: string;
+    level: number;
+  }>; // New field to track management relationships
 }
 
 async function testConnection(): Promise<boolean> {
@@ -248,7 +256,8 @@ async function processExcelData(): Promise<ProcessedData> {
       departments: new Map<string, { name: string; office: string }>(),
       positions: new Set<string>(),
       jobPositions: new Map<string, { cd: string; vt: string; pb: string; tt: string }>(),
-      users: []
+      users: [],
+      managementRelations: [] // Initialize new field
     };
 
     // Skip header row (first row is header)
@@ -266,8 +275,14 @@ async function processExcelData(): Promise<ProcessedData> {
       const pb = String(row[4]).trim();
       const tt = String(row[5]).trim();
       const phone = row[6] ? String(row[6]).trim() : '';
-      const email = row[7] ? String(row[7]).trim() : generateEmail(msnv, hoTen);
-      const role = row[8] ? String(row[8]).trim() : undefined;
+      
+      // NEW: Extract management levels
+      const managementLevel1 = row[7] ? String(row[7]).trim() : '';
+      const managementLevel2 = row[8] ? String(row[8]).trim() : '';
+      const managementLevel3 = row[9] ? String(row[9]).trim() : '';
+      
+      const email = row[10] ? String(row[10]).trim() : generateEmail(msnv, hoTen);
+      const role = row[11] ? String(row[11]).trim() : undefined;
 
       if (!msnv || !hoTen || !cd || !vt || !pb || !tt) {
         console.warn(`⚠️  Row ${i + 1}: Empty values detected, skipping...`);
@@ -292,8 +307,35 @@ async function processExcelData(): Promise<ProcessedData> {
         processed.jobPositions.set(jobKey, { cd, vt, pb, tt });
       }
 
-      // Store for user creation with proper email and role
-      processed.users.push({ msnv, hoTen, cd, vt, pb, tt, phone, email, role });
+      // Store for user creation with management data
+      processed.users.push({ 
+        msnv, hoTen, cd, vt, pb, tt, phone, 
+        managementLevel1, managementLevel2, managementLevel3,
+        email, role 
+      });
+
+      // NEW: Collect management relationships
+      if (managementLevel1) {
+        processed.managementRelations.push({
+          userMsnv: msnv,
+          managerMsnv: managementLevel1,
+          level: 1
+        });
+      }
+      if (managementLevel2) {
+        processed.managementRelations.push({
+          userMsnv: msnv,
+          managerMsnv: managementLevel2,
+          level: 2
+        });
+      }
+      if (managementLevel3) {
+        processed.managementRelations.push({
+          userMsnv: msnv,
+          managerMsnv: managementLevel3,
+          level: 3
+        });
+      }
     }
 
     console.log(`📈 Data summary:`);
@@ -302,6 +344,7 @@ async function processExcelData(): Promise<ProcessedData> {
     console.log(`   - Positions: ${processed.positions.size}`);
     console.log(`   - Job Positions: ${processed.jobPositions.size}`);
     console.log(`   - Users to create: ${processed.users.length}`);
+    console.log(`   - Management relations: ${processed.managementRelations.length}`);
 
     return processed;
   } catch (error) {
@@ -536,13 +579,14 @@ async function createUsers(
   users: ExcelRow[],
   jobPositionMap: Map<string, any>,
   officeMap: Map<string, any>
-): Promise<void> {
+): Promise<Map<string, any>> { // Return user map for management relations
   console.log('\n👥 Creating users...');
   
   const hashedPassword = await bcrypt.hash('123456', 10);
   let successCount = 0;
   let errorCount = 0;
   let skipCount = 0;
+  const userMap = new Map<string, any>(); // Track created users
 
   for (let i = 0; i < users.length; i++) {
     const userData = users[i];
@@ -565,6 +609,7 @@ async function createUsers(
 
       if (existingUser) {
         console.warn(`   ⚠️  User already exists: ${employeeCode} - ${fullName}`);
+        userMap.set(employeeCode, existingUser); // Store existing user
         skipCount++;
         continue;
       }
@@ -627,7 +672,7 @@ async function createUsers(
       const lastName = nameParts.slice(1).join(' ') || '';
 
       // Create user with proper email and role
-      await prisma.user.create({
+      const newUser = await prisma.user.create({
         data: {
           employeeCode,
           email,
@@ -641,6 +686,7 @@ async function createUsers(
         },
       });
 
+      userMap.set(employeeCode, newUser); // Store created user
       successCount++;
       console.log(`   ✅ ${employeeCode} - ${fullName} (${userData.vt}) [${userRole}] - ${email}`);
 
@@ -679,6 +725,158 @@ async function createUsers(
   
   sampleUsers.forEach(user => {
     console.log(`   ${user.firstName} ${user.lastName} → ${user.email}`);
+  });
+
+  return userMap;
+}
+
+// NEW: Function to create management relationships
+async function createManagementRelations(
+  managementRelations: Array<{ userMsnv: string; managerMsnv: string; level: number }>,
+  userMap: Map<string, any>
+): Promise<void> {
+  console.log('\n👔 Creating management relationships...');
+  
+  let successCount = 0;
+  let errorCount = 0;
+  let skipCount = 0;
+
+  // Group by manager to find departments they manage
+  const managerDepartments = new Map<string, Set<string>>();
+
+  for (const relation of managementRelations) {
+    const user = userMap.get(relation.userMsnv);
+    const manager = userMap.get(relation.managerMsnv);
+
+    if (!user) {
+      console.warn(`   ⚠️  User not found: ${relation.userMsnv}`);
+      errorCount++;
+      continue;
+    }
+
+    if (!manager) {
+      console.warn(`   ⚠️  Manager not found: ${relation.managerMsnv}`);
+      errorCount++;
+      continue;
+    }
+
+    // Get user's department
+    const userWithJobPosition = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        jobPosition: {
+          include: { department: true }
+        }
+      }
+    });
+
+    if (!userWithJobPosition?.jobPosition?.department) {
+      console.warn(`   ⚠️  Department not found for user: ${relation.userMsnv}`);
+      errorCount++;
+      continue;
+    }
+
+    const departmentId = userWithJobPosition.jobPosition.department.id;
+    
+    // Track departments this manager manages
+    if (!managerDepartments.has(relation.managerMsnv)) {
+      managerDepartments.set(relation.managerMsnv, new Set());
+    }
+    managerDepartments.get(relation.managerMsnv)!.add(departmentId);
+  }
+
+  // Create UserDepartmentManagement records
+  for (const [managerMsnv, departments] of managerDepartments) {
+    const manager = userMap.get(managerMsnv);
+    if (!manager) continue;
+
+    for (const departmentId of departments) {
+      try {
+        // Check if relationship already exists
+        const existingRelation = await prisma.userDepartmentManagement.findUnique({
+          where: {
+            userId_departmentId: {
+              userId: manager.id,
+              departmentId: departmentId
+            }
+          }
+        });
+
+        if (existingRelation) {
+          console.warn(`   ⚠️  Management relation already exists: ${managerMsnv} -> Dept ${departmentId}`);
+          skipCount++;
+          continue;
+        }
+
+        await prisma.userDepartmentManagement.create({
+          data: {
+            userId: manager.id,
+            departmentId: departmentId,
+            isActive: true
+          }
+        });
+
+        successCount++;
+        
+        // Get department name for logging
+        const department = await prisma.department.findUnique({
+          where: { id: departmentId },
+          select: { name: true }
+        });
+        
+        console.log(`   ✅ ${managerMsnv} manages department: ${department?.name || departmentId}`);
+
+      } catch (error) {
+        console.error(`   ❌ Error creating management relation ${managerMsnv} -> ${departmentId}:`, error.message);
+        errorCount++;
+      }
+    }
+  }
+
+  console.log('\n📊 Management relationships summary:');
+  console.log(`   ✅ Success: ${successCount}`);
+  console.log(`   ⚠️  Skipped (already exists): ${skipCount}`);
+  console.log(`   ❌ Failed: ${errorCount}`);
+
+  // Show management statistics
+  console.log('\n👥 Management Statistics:');
+  const managementStats = await prisma.userDepartmentManagement.findMany({
+    include: {
+      user: {
+        select: {
+          employeeCode: true,
+          firstName: true,
+          lastName: true,
+          jobPosition: {
+            include: {
+              position: { select: { name: true } }
+            }
+          }
+        }
+      },
+      department: {
+        select: { name: true }
+      }
+    }
+  });
+
+  const managerCounts = new Map<string, number>();
+  managementStats.forEach(stat => {
+    const managerKey = `${stat.user.employeeCode} - ${stat.user.firstName} ${stat.user.lastName} (${stat.user.jobPosition?.position?.name})`;
+    managerCounts.set(managerKey, (managerCounts.get(managerKey) || 0) + 1);
+  });
+
+  console.log(`   Total managers: ${managerCounts.size}`);
+  console.log(`   Total department management relations: ${managementStats.length}`);
+  
+  // Show top managers by department count
+  const sortedManagers = Array.from(managerCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+    
+  console.log('\n🏆 Top Managers by Department Count:');
+  sortedManagers.forEach(([manager, count]) => {
+    console.log(`   ${manager}: ${count} departments`);
   });
 }
 
@@ -771,10 +969,14 @@ async function main() {
       processedData.jobPositions, 
       positionMap, 
       departmentMap,
-      officeMap  // Pass officeMap
+      officeMap
     );
     
-    await createUsers(processedData.users, jobPositionMap, officeMap);
+    const userMap = await createUsers(processedData.users, jobPositionMap, officeMap);
+
+    // NEW: Step 5 - Create management relationships
+    console.log('\n🔄 Step 5: Creating management relationships...');
+    await createManagementRelations(processedData.managementRelations, userMap);
 
     console.log('\n🎉 Complete data import finished successfully!');
     console.log('\n📋 Final summary:');
@@ -783,6 +985,7 @@ async function main() {
     console.log(`   👔 Positions: ${processedData.positions.size}`);
     console.log(`   💼 Job Positions: ${processedData.jobPositions.size}`);
     console.log(`   👥 Users: ${processedData.users.length} processed`);
+    console.log(`   🔗 Management Relations: ${processedData.managementRelations.length} processed`);
     
     console.log('\n🔧 Environment summary:');
     console.log(`   Environment: ${nodeEnv}`);

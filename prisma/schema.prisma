@@ -61,6 +61,7 @@ model Department {
   updatedAt    DateTime      @updatedAt
   office       Office        @relation(fields: [officeId], references: [id], onDelete: Cascade)
   jobPositions JobPosition[]
+  managers     UserDepartmentManagement[]
 
   @@unique([name, officeId])
   @@index([officeId])
@@ -101,6 +102,7 @@ model User {
   evaluations   TaskEvaluation[]  // Tasks this user has evaluated
   jobPosition   JobPosition @relation(fields: [jobPositionId], references: [id])
   office        Office      @relation(fields: [officeId], references: [id])
+  managedDepartments UserDepartmentManagement[] @relation("UserToManagedDepartments")
 
   @@index([jobPositionId])
   @@index([officeId])
@@ -174,6 +176,23 @@ model TaskEvaluation {
   @@index([evaluationType])
   @@index([createdAt])
   @@map("task_evaluations")
+}
+
+model UserDepartmentManagement {
+  id           String     @id @default(uuid())
+  userId       String     // Manager's user ID
+  departmentId String     // Department they manage
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  
+  user         User       @relation("UserToManagedDepartments", fields: [userId], references: [id], onDelete: Cascade)
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, departmentId])
+  @@index([userId])
+  @@index([departmentId])
+  @@map("user_department_managements")
 }
 
 enum Role {
