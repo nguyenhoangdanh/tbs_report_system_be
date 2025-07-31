@@ -19,6 +19,14 @@ async function bootstrap() {
 
     console.log('🚀 Starting Weekly Report Backend...');
     console.log(`📍 Environment: ${nodeEnv}`);
+    
+    // Add cron job status logging for Railway
+    if (nodeEnv === 'production') {
+      console.log('⏰ Cron jobs enabled in production');
+      console.log('📅 Schedule: Lock reports every Friday 1:00 AM (UTC+7)');
+      console.log('🔧 Cron expression: 0 18 * * 4 (18:00 UTC Thursday)');
+    }
+
     console.log(`🔗 Database URL configured: ${!!process.env.DATABASE_URL}`);
 
     // Enhanced environment debugging
