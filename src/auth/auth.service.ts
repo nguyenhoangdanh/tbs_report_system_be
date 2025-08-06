@@ -29,6 +29,18 @@ export class AuthService {
     private readonly envConfig: EnvironmentConfig,
   ) {}
 
+  // iOS Detection utility
+  private detectiOSDevice(userAgent: string): boolean {
+    const iosPattern = /iPad|iPhone|iPod|Mac.*Mobile|Mac.*Touch/i;
+    const safariPattern = /Safari/i;
+    const chromePattern = /Chrome|CriOS/i;
+    
+    const isIOS = iosPattern.test(userAgent);
+    const isSafari = safariPattern.test(userAgent) && !chromePattern.test(userAgent);
+    
+    return isIOS && isSafari;
+  }
+
   async register(registerDto: RegisterDto) {
     const {
       employeeCode,
@@ -127,10 +139,18 @@ export class AuthService {
     };
   }
 
-  async login(loginDto: LoginDto, response?: Response, rememberMe = false): Promise<AuthResponseDto> {
+  async login(loginDto: LoginDto, response?: Response, rememberMe = false, request?: any): Promise<AuthResponseDto> {
     const { employeeCode, password } = loginDto;
 
     try {
+      // Detect iOS Safari
+      const userAgent = request?.headers['user-agent'] || '';
+      const isIOSSafari = this.detectiOSDevice(userAgent);
+      
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log(`Device Detection: iOS Safari = ${isIOSSafari}, UA: ${userAgent.substring(0, 100)}`);
+      }
+
       // Validate input
       if (!employeeCode || !password) {
         this.logger.warn(`Login failed: Missing employeeCode or password`);
@@ -235,21 +255,20 @@ export class AuthService {
         throw new BadRequestException('Mật khẩu không chính xác');
       }
 
-      // Generate JWT token with explicit secret logging for debugging
+      // Generate JWT token
       const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
-      
       
       const access_token = this.jwtService.sign(payload, {
         expiresIn: rememberMe ? '30d' : '7d',
-        secret: this.envConfig.jwtSecret, // Explicitly pass secret
+        secret: this.envConfig.jwtSecret,
       });
 
-      // Set cookie if response object is provided
+      // Set cookie with iOS-specific handling
       if (response) {
-        this.setAuthCookie(response, access_token, rememberMe);
+        this.setAuthCookie(response, access_token, rememberMe, isIOSSafari);
       }
 
-      // Return user data without password and convert dates to strings
+      // Return user data with iOS-specific headers
       const { password: _, ...userWithoutPassword } = user;
       const userResponse = {
         ...userWithoutPassword,
@@ -258,22 +277,26 @@ export class AuthService {
         updatedAt: userWithoutPassword.updatedAt.toISOString(),
       };
 
+      // For iOS Safari, also set token in response header as fallback
+      if (isIOSSafari && response) {
+        response.setHeader('X-Access-Token', access_token);
+        response.setHeader('X-iOS-Fallback', 'true');
+      }
+
       return {
         access_token,
         user: userResponse,
-        message: 'Đăng nhập thành công'
+        message: 'Đăng nhập thành công',
+        ...(isIOSSafari && { iosDetected: true, fallbackToken: access_token })
       };
 
     } catch (error) {
-      // Log the actual error for debugging
       this.logger.error(`Login error for ${employeeCode}:`, error.message);
       
-      // Re-throw the error if it's already a proper HTTP exception
       if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
         throw error;
       }
       
-      // For any other error, throw a generic bad request
       throw new BadRequestException('Login failed. Please check your credentials.');
     }
   }
@@ -318,7 +341,11 @@ export class AuthService {
     return { message: 'Password changed successfully' };
   }
 
-  async refreshToken(userId: string, response: Response, rememberMe = false): Promise<AuthResponseDto> {
+  async refreshToken(userId: string, response: Response, rememberMe = false, request?: any): Promise<AuthResponseDto> {
+    // Detect iOS Safari
+    const userAgent = request?.headers['user-agent'] || '';
+    const isIOSSafari = this.detectiOSDevice(userAgent);
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -336,16 +363,21 @@ export class AuthService {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    // Generate new token with updated expiration
+    // Generate new token
     const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
     const access_token = this.jwtService.sign(payload, {
-      expiresIn: rememberMe ? '30d' : '7d'  // Updated: true = 30 days, false = 7 days
+      expiresIn: rememberMe ? '30d' : '7d'
     });
 
-    // Update cookie with new token
-    this.setAuthCookie(response, access_token, rememberMe);
+    // Update cookie with iOS handling
+    this.setAuthCookie(response, access_token, rememberMe, isIOSSafari);
 
-    // Convert dates to strings
+    // For iOS Safari, also set token in response header
+    if (isIOSSafari) {
+      response.setHeader('X-Access-Token', access_token);
+      response.setHeader('X-iOS-Fallback', 'true');
+    }
+
     const { password: _, ...userWithoutPassword } = user;
     const userResponse = {
       ...userWithoutPassword,
@@ -357,6 +389,7 @@ export class AuthService {
       access_token,
       user: userResponse,
       message: 'Token refreshed successfully',
+      ...(isIOSSafari && { iosDetected: true, fallbackToken: access_token })
     };
   }
 
@@ -433,22 +466,21 @@ export class AuthService {
     };
   }
 
-  private setAuthCookie(response: Response, token: string, rememberMe = false) {
-    // Updated cookie duration: false = 7 days, true = 30 days
+  private setAuthCookie(response: Response, token: string, rememberMe = false, isIOSSafari = false) {
     const maxAge = rememberMe
       ? 30 * 24 * 60 * 60 * 1000  // 30 days
       : 7 * 24 * 60 * 60 * 1000;  // 7 days
 
     const isProduction = this.envConfig.isProduction;
 
-    // Enhanced cookie options for cross-origin
+    // iOS-specific cookie strategy
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
-      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      // iOS Safari: Always use 'lax' instead of 'none' for better compatibility
+      sameSite: (isProduction && !isIOSSafari) ? 'none' as const : 'lax' as const,
       maxAge,
       path: '/',
-      // Remove domain completely for cross-origin
     };
 
     this.logger.log('Setting auth cookie:', {
@@ -457,32 +489,32 @@ export class AuthService {
       rememberMe,
       durationDays: rememberMe ? 30 : 7,
       isProduction,
+      isIOSSafari,
       secure: cookieOptions.secure,
       sameSite: cookieOptions.sameSite,
-      hasResponse: !!response,
     });
 
     response.cookie('access_token', token, cookieOptions);
     
-    // Debug: Also set a test cookie to verify cross-origin works
-    // if (isProduction) {
-    //   response.cookie('debug-token', 'test-value', {
-    //     httpOnly: false, // Make it accessible via JS for debugging
-    //     secure: true,
-    //     sameSite: 'none',
-    //     maxAge: 300000, // 5 minutes
-    //     path: '/',
-    //   });
-    // }
+    // For iOS Safari in production, set additional fallback cookie
+    if (isIOSSafari && isProduction) {
+      response.cookie('ios_auth_token', token, {
+        httpOnly: false, // Allow JS access as fallback
+        secure: true,
+        sameSite: 'lax',
+        maxAge,
+        path: '/',
+      });
+    }
   }
 
-  private clearAuthCookie(response: Response) {
+  private clearAuthCookie(response: Response, isIOSSafari = false) {
     const isProduction = this.envConfig.isProduction;
     
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
-      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      sameSite: (isProduction && !isIOSSafari) ? 'none' as const : 'lax' as const,
       path: '/',
     };
 
@@ -490,13 +522,13 @@ export class AuthService {
 
     response.clearCookie('access_token', cookieOptions);
     
-    // Also clear debug cookie
-    // if (isProduction) {
-    //   response.clearCookie('debug-token', {
-    //     secure: true,
-    //     sameSite: 'none',
-    //     path: '/',
-    //   });
-    // }
+    // Clear iOS fallback cookie
+    if (isIOSSafari && isProduction) {
+      response.clearCookie('ios_auth_token', {
+        secure: true,
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
   }
 }

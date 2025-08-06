@@ -96,7 +96,7 @@ async function bootstrap() {
     // Apply CORS configuration with enhanced debugging for production
     app.enableCors({
       ...corsConfig,
-      credentials: true, // Essential for cookies
+      credentials: true, // ✅ Đúng - server-side boolean
       // Enhanced CORS for production debugging
       optionsSuccessStatus: 200,
       preflightContinue: false,
@@ -106,8 +106,8 @@ async function bootstrap() {
         'Content-Type',
         'Accept',
         'Authorization',
-        'Cache-Control',     // ✅ Allow Cache-Control
-        'Pragma',            // ✅ Allow Pragma
+        'X-iOS-Version',      // ✅ Detect iOS version
+        'User-Agent',         // ✅ Detect iOS Safari
         'X-Content-Type-Options',
         'X-Frame-Options',
         'X-XSS-Protection',
@@ -122,6 +122,7 @@ async function bootstrap() {
     console.log(`🌐 Allowed origins: ${envConfig.allowedOrigins.join(', ')}`);
     console.log(`🍪 Credentials enabled: true`);
     console.log(`🔒 Cookie settings: secure=${envConfig.isProduction}, sameSite=${envConfig.isProduction ? 'none' : 'lax'}`);
+    console.log(`📱 iOS Safari compatibility: Enhanced cookie handling`);
 
     app.setGlobalPrefix('api', {
       exclude: [

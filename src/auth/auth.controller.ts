@@ -59,9 +59,10 @@ export class AuthController {
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) response: Response,
+    @Req() request: any,
   ): Promise<AuthResponseDto> {
     try {
-      return await this.authService.login(loginDto, response, loginDto.rememberMe || false);
+      return await this.authService.login(loginDto, response, loginDto.rememberMe || false, request);
     } catch (error) {
       console.error('Login controller error:', error);
       throw error;
@@ -100,12 +101,14 @@ export class AuthController {
   refreshToken(
     @GetUser() user: any,
     @Res({ passthrough: true }) response: Response,
+    @Req() request: any,
     @Body('rememberMe') rememberMe?: boolean,
   ): Promise<AuthResponseDto> {
     return this.authService.refreshToken(
       user.id,
       response,
       rememberMe || false,
+      request,
     );
   }
 
@@ -127,31 +130,56 @@ export class AuthController {
     return this.authService.resetPassword(resetPasswordDto);
   }
 
-  // Enhanced test endpoint to debug cookie persistence
+  // Enhanced test endpoint to debug iOS detection
   @Post('check-cookie')
   @Public()
-  @ApiOperation({ summary: 'Check if cookie persists and debug cross-origin' })
+  @ApiOperation({ summary: 'Check iOS detection and cookie compatibility' })
   checkCookie(@Req() req: any, @Res({ passthrough: true }) response: Response) {
-    const accessToken = req.cookies['access_token'];
-    const debugToken = req.cookies['debug-token'];
+    const userAgent = req.headers['user-agent'] || '';
+    const isIOSSafari = /iPad|iPhone|iPod|Mac.*Mobile|Mac.*Touch/i.test(userAgent) && 
+                       /Safari/i.test(userAgent) && 
+                       !/Chrome|CriOS/i.test(userAgent);
     
-    // Set a test cookie to verify cross-origin functionality
-    response.cookie('test-cookie', `test-${Date.now()}`, {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: 300000, // 5 minutes
-      path: '/',
-    });
+    const accessToken = req.cookies['access_token'];
+    const iosToken = req.cookies['ios_auth_token'];
+    
+    // Set test cookies with iOS-specific handling
+    if (isIOSSafari) {
+      response.cookie('test-ios-cookie', `ios-test-${Date.now()}`, {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 300000,
+        path: '/',
+      });
+    } else {
+      response.cookie('test-cookie', `test-${Date.now()}`, {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: 300000,
+        path: '/',
+      });
+    }
 
     return {
       success: true,
-      hasAccessToken: !!accessToken,
-      hasDebugToken: !!debugToken,
-      accessTokenLength: accessToken ? accessToken.length : 0,
-      debugTokenValue: debugToken,
-      allCookies: Object.keys(req.cookies || {}),
-      requestOrigin: req.headers.origin,
+      deviceDetection: {
+        userAgent: userAgent.substring(0, 100) + '...',
+        isIOSSafari,
+        platform: req.headers['sec-ch-ua-platform'] || 'unknown'
+      },
+      cookies: {
+        hasAccessToken: !!accessToken,
+        hasIOSToken: !!iosToken,
+        accessTokenLength: accessToken ? accessToken.length : 0,
+        allCookies: Object.keys(req.cookies || {})
+      },
+      requestInfo: {
+        origin: req.headers.origin,
+        referer: req.headers.referer,
+        method: req.method
+      },
       timestamp: new Date().toISOString(),
     };
   }
