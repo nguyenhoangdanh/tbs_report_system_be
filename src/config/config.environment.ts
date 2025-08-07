@@ -156,9 +156,19 @@ export class EnvironmentConfig {
         'Accept',
         'Authorization',
         'Cache-Control',
-        'Cookie', // Add Cookie header
+        'Cookie',
+        'Set-Cookie',
+        'X-Access-Token',     // iOS fallback
+        'X-iOS-Version',      // iOS detection
+        'X-iOS-Fallback',     // iOS handling flag
+        'User-Agent'
       ],
-      exposedHeaders: ['set-cookie'],
+      exposedHeaders: [
+        'Set-Cookie', 
+        'X-Access-Token',
+        'X-iOS-Fallback',
+        'X-iOS-Version'
+      ],
       optionsSuccessStatus: 200,
       preflightContinue: false,
     };

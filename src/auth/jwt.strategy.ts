@@ -16,15 +16,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
-        // Enhanced cookie extraction with iOS fallback
+        // Enhanced cookie extraction with multiple iOS fallbacks
         (request: Request) => {
           const token = request?.cookies?.['access_token'];
           const iosToken = request?.cookies?.['ios_access_token'];
+          const authToken = request?.cookies?.['auth_token'];
           
-          // Try main token first, then iOS fallback
-          const finalToken = token || iosToken;
+          // Try main token first, then iOS fallbacks
+          const finalToken = token || iosToken || authToken;
 
-          // Debug logging for iOS issues
+          // Enhanced debug logging for iOS issues
           if (this.envConfig.isProduction) {
             const userAgent = request?.headers?.['user-agent'] || '';
             const isIOS = /iPad|iPhone|iPod|Mac.*OS.*X/i.test(userAgent);
@@ -34,11 +35,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
               cookieKeys: request?.cookies ? Object.keys(request.cookies) : [],
               hasAccessToken: !!token,
               hasIOSToken: !!iosToken,
+              hasAuthToken: !!authToken,
               finalToken: !!finalToken,
               tokenLength: finalToken ? finalToken.length : 0,
               isIOSDevice: isIOS,
               userAgent: userAgent?.substring(0, 50),
               origin: request?.headers?.origin,
+              referer: request?.headers?.referer,
+              cookieHeader: request?.headers?.cookie?.substring(0, 100) + '...'
             });
           }
 

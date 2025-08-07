@@ -509,6 +509,10 @@ export class AuthService {
       sameSite: (isProduction && !isIOSDevice) ? 'none' as const : 'lax' as const,
       maxAge,
       path: '/',
+      // Critical: Don't set domain for iOS to avoid cross-domain issues
+      ...(isProduction && !isIOSDevice && {
+        domain: '.vercel.app' // Specific domain for non-iOS
+      })
     };
 
     this.logger.log('Setting auth cookie:', {
@@ -529,11 +533,21 @@ export class AuthService {
     response.cookie('access_token', token, cookieOptions);
     
     // For iOS devices, also set a backup cookie with different settings
-    if (isIOSDevice && isProduction) {
+    if (isIOSDevice) {
       response.cookie('ios_access_token', token, {
         httpOnly: false, // Allow JS access as fallback
-        secure: true,
+        secure: isProduction,
         sameSite: 'lax' as const,
+        maxAge,
+        path: '/',
+        // No domain for iOS
+      });
+      
+      // Also set in a simple format for iOS
+      response.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'strict' as const,
         maxAge,
         path: '/',
       });
@@ -544,11 +558,15 @@ export class AuthService {
     const isProduction = this.envConfig.isProduction;
     const isIOSDevice = deviceInfo?.isIOSSafari || false;
     
+    // Clear main cookie
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
       sameSite: (isProduction && !isIOSDevice) ? 'none' as const : 'lax' as const,
       path: '/',
+      ...(isProduction && !isIOSDevice && {
+        domain: '.vercel.app'
+      })
     };
 
     this.logger.log('Clearing auth cookie with options:', cookieOptions);
@@ -556,10 +574,16 @@ export class AuthService {
     response.clearCookie('access_token', cookieOptions);
     
     // Clear iOS fallback cookies
-    if (isIOSDevice && isProduction) {
+    if (isIOSDevice) {
       response.clearCookie('ios_access_token', {
-        secure: true,
+        secure: isProduction,
         sameSite: 'lax',
+        path: '/',
+      });
+      
+      response.clearCookie('auth_token', {
+        secure: isProduction,
+        sameSite: 'strict',
         path: '/',
       });
     }
