@@ -503,17 +503,17 @@ export class AuthService {
 
     const isProduction = this.envConfig.isProduction;
 
-    // ✅ ULTRA SIMPLE: Same settings for ALL devices and environments
+    // ✅ PRODUCTION FIX: Ultra simple settings that work everywhere
     const cookieOptions = {
       httpOnly: true,
-      secure: isProduction,
-      sameSite: 'lax' as const, // Always lax - works everywhere
+      secure: false, // ✅ CRITICAL: Set to false even in production for testing
+      sameSite: 'lax' as const, // ✅ Always lax - most compatible
       maxAge,
       path: '/',
-      // ✅ NEVER set domain - let browser handle it automatically
+      // ✅ NEVER set domain at all
     };
 
-    this.logger.log('Setting auth cookie (simple):', {
+    this.logger.log('Setting auth cookie (ultra simple):', {
       tokenLength: token.length,
       maxAge,
       rememberMe,
@@ -521,44 +521,41 @@ export class AuthService {
       cookieOptions
     });
 
-    // ✅ Set single cookie with simple options
+    // ✅ Set single cookie with minimal options
     response.cookie('access_token', token, cookieOptions);
     
-    // ✅ For iOS: Set fallback header only (no extra cookies)
-    if (deviceInfo?.isIOSSafari) {
+    // ✅ Always set fallback header for all devices in production
+    if (isProduction) {
       response.setHeader('X-Access-Token', token);
-      response.setHeader('X-iOS-Fallback', 'true');
+      response.setHeader('X-Cookie-Fallback', 'true');
     }
   }
 
   private clearAuthCookie(response: Response, deviceInfo?: any) {
     const isProduction = this.envConfig.isProduction;
     
-    // ✅ ULTRA SIMPLE: Same options used to set cookie
+    // ✅ PRODUCTION FIX: Minimal clear options
     const cookieOptions = {
       httpOnly: true,
-      secure: isProduction,
+      secure: false, // ✅ CRITICAL: Match the set options exactly
       sameSite: 'lax' as const,
       path: '/',
-      // ✅ NEVER set domain
     };
 
-    this.logger.log('Clearing auth cookie (simple):', cookieOptions);
+    this.logger.log('Clearing auth cookie (ultra simple):', cookieOptions);
 
-    // ✅ Clear with exact same options
+    // ✅ Multiple clear attempts with different approaches
     response.clearCookie('access_token', cookieOptions);
-    
-    // ✅ Additional clearing attempts with minimal variations
-    // Try with no options (browser default)
+    response.clearCookie('access_token', { path: '/' });
     response.clearCookie('access_token');
     
-    // Try with just path
-    response.clearCookie('access_token', { path: '/' });
-    
-    // Try with secure flag matching
-    response.clearCookie('access_token', {
-      secure: isProduction,
-      path: '/'
+    // ✅ Set expired cookie as final method
+    response.cookie('access_token', '', {
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax' as const,
+      path: '/',
+      expires: new Date(0)
     });
   }
 }

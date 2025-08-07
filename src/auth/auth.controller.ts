@@ -284,4 +284,65 @@ export class AuthController {
       timestamp: new Date().toISOString(),
     };
   }
+
+  // Production cookie debug endpoint
+  @Post('production-cookie-test')
+  @Public()
+  @ApiOperation({ summary: 'Test production cookie functionality' })
+  productionCookieTest(@Req() req: any, @Res({ passthrough: true }) response: Response) {
+    const userAgent = req.headers['user-agent'] || '';
+    const origin = req.headers.origin || '';
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    // Set test cookie with production settings
+    const testToken = `prod-test-${Date.now()}`;
+    
+    // ✅ Use exact same settings as login
+    response.cookie('test_production_cookie', testToken, {
+      httpOnly: true,
+      secure: false, // Same as login
+      sameSite: 'lax' as const,
+      maxAge: 300000, // 5 minutes
+      path: '/',
+    });
+    
+    // Always set fallback header in production
+    response.setHeader('X-Access-Token', testToken);
+    response.setHeader('X-Cookie-Fallback', 'true');
+
+    return {
+      success: true,
+      production: isProduction,
+      origin,
+      userAgent: userAgent.substring(0, 100),
+      testCookie: {
+        name: 'test_production_cookie',
+        value: testToken,
+        settings: {
+          httpOnly: true,
+          secure: false,
+          sameSite: 'lax',
+          maxAge: 300000,
+          path: '/'
+        }
+      },
+      fallback: {
+        headerName: 'X-Access-Token',
+        headerValue: testToken,
+        fallbackEnabled: true
+      },
+      instructions: [
+        '1. Check browser cookies for test_production_cookie',
+        '2. Check localStorage for fallback token',
+        '3. Verify CORS headers allow credentials',
+        '4. Test from exact production domain'
+      ],
+      corsHeaders: {
+        origin: req.headers.origin,
+        credentials: 'include',
+        allowedOrigin: origin.endsWith('.vercel.app') ? 'allowed' : 'check-config'
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }
 }

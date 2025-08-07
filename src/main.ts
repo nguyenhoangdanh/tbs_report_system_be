@@ -93,45 +93,71 @@ async function bootstrap() {
     const envConfig = app.get(EnvironmentConfig);
     const corsConfig = envConfig.getCorsConfig();
 
-    // Apply CORS configuration with enhanced iOS support
+    // Apply CORS configuration with enhanced production support
     app.enableCors({
-      ...corsConfig,
+      origin: (origin, callback) => {
+        // ✅ PRODUCTION FIX: Be more permissive with origins
+        const allowedOrigins = [
+          'https://weeklyreport-orpin.vercel.app',
+          'https://weeklyreportsystem-mu.vercel.app', 
+          'http://localhost:3000',
+          'http://127.0.0.1:3000'
+        ];
+
+        // Allow requests with no origin (mobile apps, etc.)
+        if (!origin) {
+          return callback(null, true);
+        }
+
+        // Check exact match first
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+
+        // ✅ CRITICAL: Allow all vercel.app subdomains in production
+        if (nodeEnv === 'production' && origin.endsWith('.vercel.app')) {
+          return callback(null, true);
+        }
+
+        // Allow localhost in development
+        if (nodeEnv !== 'production') {
+          if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+            return callback(null, true);
+          }
+          return callback(null, true); // Allow all in dev
+        }
+
+        // Block unknown origins in production
+        console.warn(`❌ Blocked origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'), false);
+      },
       credentials: true,
-      optionsSuccessStatus: 200,
-      preflightContinue: false,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
         'Origin',
-        'X-Requested-With', 
-        'Content-Type',
+        'X-Requested-With',
+        'Content-Type', 
         'Accept',
         'Authorization',
         'Cookie',
         'Set-Cookie',
-        'X-Access-Token',        // iOS fallback header
-        'X-iOS-Version',         // iOS version detection
-        'X-iOS-Fallback',        // iOS fallback indicator
-        'User-Agent',
-        'X-Content-Type-Options',
-        'X-Frame-Options',
-        'X-XSS-Protection',
-        'Access-Control-Allow-Credentials',
-        'Access-Control-Allow-Origin',
-        'Access-Control-Allow-Headers',
-        'Access-Control-Allow-Methods'
+        'X-Access-Token',
+        'X-Cookie-Fallback',
+        'User-Agent'
       ],
       exposedHeaders: [
         'Set-Cookie',
-        'X-Access-Token',        // Expose iOS fallback token
-        'X-iOS-Fallback',        
-        'X-iOS-Version'
+        'X-Access-Token', 
+        'X-Cookie-Fallback'
       ],
+      optionsSuccessStatus: 200,
+      preflightContinue: false,
     });
     
-    console.log('✅ CORS configuration applied');
-    console.log(`🌐 Allowed origins: ${envConfig.allowedOrigins.join(', ')}`);
+    console.log('✅ CORS configuration applied (production-optimized)');
+    console.log(`🌐 Primary origin: https://weeklyreport-orpin.vercel.app`);
     console.log(`🍪 Credentials enabled: true`);
-    console.log(`🔒 Cookie settings: secure=${envConfig.isProduction}, sameSite=${envConfig.isProduction ? 'none' : 'lax'}`);
-    console.log(`📱 iOS Safari compatibility: Enhanced cookie handling`);
+    console.log(`🔒 Cookie settings: secure=false, sameSite=lax (production-compatible)`);
 
     app.setGlobalPrefix('api', {
       exclude: [
