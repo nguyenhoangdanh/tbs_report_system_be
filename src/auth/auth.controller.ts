@@ -147,65 +147,88 @@ export class AuthController {
     const isMac = macPattern.test(userAgent);
     const isSafari = safariPattern.test(userAgent);
     const isChrome = chromePattern.test(userAgent);
+    const isSimulator = userAgent.includes('Simulator');
     
     const isIOSDevice = isIOS || isMac;
     const isIOSSafari = isIOSDevice && isSafari && !isChrome;
+    const isRealDevice = isIOS && !isSimulator;
     
-    const accessToken = req.cookies['access_token'];
-    const iosToken = req.cookies['ios_access_token'];
+    // Check all possible cookies
+    const allCookies = req.cookies || {};
+    const cookieHeader = req.headers.cookie;
     
-    // Set test cookies with iOS-specific handling
+    // Set multiple test cookies for iOS
+    const testToken = `test-${Date.now()}`;
     const isProduction = process.env.NODE_ENV === 'production';
     
     if (isIOSSafari) {
-      // iOS-specific test cookie
-      response.cookie('test-ios-cookie', `ios-test-${Date.now()}`, {
-        httpOnly: false,
-        secure: isProduction,
-        sameSite: 'lax', // Always lax for iOS
-        maxAge: 300000,
-        path: '/',
-      });
-    } else {
-      // Standard test cookie
-      response.cookie('test-cookie', `test-${Date.now()}`, {
-        httpOnly: false,
-        secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax',
-        maxAge: 300000,
-        path: '/',
+      // Set multiple test cookies with different strategies
+      const strategies = [
+        { name: 'test-strict', sameSite: 'strict' as const },
+        { name: 'test-lax', sameSite: 'lax' as const },
+        { name: 'test-session' }, // No maxAge
+        { name: 'test-js', httpOnly: false },
+      ];
+      
+      strategies.forEach(strategy => {
+        response.cookie(strategy.name, testToken, {
+          httpOnly: strategy.httpOnly !== false,
+          secure: isProduction,
+          sameSite: strategy.sameSite || 'lax',
+          ...(strategy.name !== 'test-session' && { maxAge: 300000 }),
+          path: '/',
+        });
       });
     }
 
     return {
       success: true,
       deviceDetection: {
-        userAgent: userAgent.substring(0, 100) + '...',
+        userAgent: userAgent.substring(0, 150) + (userAgent.length > 150 ? '...' : ''),
         isIOS,
         isMac,
         isSafari,
         isChrome,
         isIOSDevice,
         isIOSSafari,
+        isRealDevice,
+        isSimulator,
         platform: req.headers['sec-ch-ua-platform'] || 'unknown'
       },
       cookies: {
-        hasAccessToken: !!accessToken,
-        hasIOSToken: !!iosToken,
-        accessTokenLength: accessToken ? accessToken.length : 0,
-        iosTokenLength: iosToken ? iosToken.length : 0,
-        allCookies: Object.keys(req.cookies || {})
+        hasCookieHeader: !!cookieHeader,
+        cookieHeaderLength: cookieHeader ? cookieHeader.length : 0,
+        cookieHeaderRaw: cookieHeader || 'undefined',
+        
+        hasAccessToken: !!allCookies['access_token'],
+        hasIOSToken: !!allCookies['ios_access_token'],
+        hasAuthToken: !!allCookies['auth_token'],
+        hasSessionToken: !!allCookies['session_token'],
+        
+        allCookieKeys: Object.keys(allCookies),
+        cookieCount: Object.keys(allCookies).length,
+        
+        // Cookie values (first 10 chars for security)
+        accessTokenPreview: allCookies['access_token'] ? allCookies['access_token'].substring(0, 10) + '...' : null,
+        iosTokenPreview: allCookies['ios_access_token'] ? allCookies['ios_access_token'].substring(0, 10) + '...' : null,
       },
       headers: {
         origin: req.headers.origin,
         referer: req.headers.referer,
+        host: req.headers.host,
+        'sec-fetch-site': req.headers['sec-fetch-site'],
+        'sec-fetch-mode': req.headers['sec-fetch-mode'],
         'sec-ch-ua': req.headers['sec-ch-ua'],
         'sec-ch-ua-platform': req.headers['sec-ch-ua-platform']
       },
       recommendations: {
         shouldUseFallback: isIOSSafari,
-        cookieStrategy: isIOSSafari ? 'lax-sameSite' : 'standard',
-        requiresSpecialHandling: isIOSSafari
+        cookieStrategy: isIOSSafari ? 'multi-strategy-ios' : 'standard',
+        requiresSpecialHandling: isIOSSafari,
+        isRealDeviceTest: isRealDevice,
+        testAdvice: isRealDevice 
+          ? 'Test on real iOS device detected - results are reliable'
+          : 'Simulation detected - test on real iOS device for accurate results'
       },
       timestamp: new Date().toISOString(),
     };

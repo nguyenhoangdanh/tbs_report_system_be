@@ -501,19 +501,58 @@ export class AuthService {
     const isProduction = this.envConfig.isProduction;
     const isIOSDevice = deviceInfo?.isIOSSafari || false;
 
-    // iOS Safari has very specific cookie requirements
-    const cookieOptions = {
-      httpOnly: true,
-      secure: isProduction, // Always secure in production
-      // Critical: iOS Safari needs 'lax' sameSite, never 'none'
-      sameSite: (isProduction && !isIOSDevice) ? 'none' as const : 'lax' as const,
-      maxAge,
-      path: '/',
-      // Critical: Don't set domain for iOS to avoid cross-domain issues
-      ...(isProduction && !isIOSDevice && {
-        domain: '.vercel.app' // Specific domain for non-iOS
-      })
-    };
+    // For iOS Safari: Use multiple cookie strategies
+    if (isIOSDevice) {
+      // Strategy 1: Simple httpOnly cookie with strict sameSite
+      response.cookie('access_token', token, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'strict' as const,
+        maxAge,
+        path: '/',
+      });
+
+      // Strategy 2: Lax sameSite backup
+      response.cookie('ios_access_token', token, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax' as const,
+        maxAge,
+        path: '/',
+      });
+
+      // Strategy 3: Non-httpOnly for JS access (last resort)
+      response.cookie('auth_token', token, {
+        httpOnly: false,
+        secure: isProduction,
+        sameSite: 'lax' as const,
+        maxAge,
+        path: '/',
+      });
+
+      // Strategy 4: Session cookie (no maxAge)
+      response.cookie('session_token', token, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax' as const,
+        path: '/',
+      });
+
+    } else {
+      // Standard cookie for non-iOS
+      const cookieOptions = {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' as const : 'lax' as const,
+        maxAge,
+        path: '/',
+        ...(isProduction && {
+          domain: '.vercel.app'
+        })
+      };
+
+      response.cookie('access_token', token, cookieOptions);
+    }
 
     this.logger.log('Setting auth cookie:', {
       tokenLength: token.length,
@@ -522,70 +561,43 @@ export class AuthService {
       durationDays: rememberMe ? 30 : 7,
       isProduction,
       isIOSDevice,
-      deviceInfo: deviceInfo || 'unknown',
-      cookieOptions: {
-        secure: cookieOptions.secure,
-        sameSite: cookieOptions.sameSite,
-        domain: (cookieOptions as any).domain || 'not-set'
-      }
+      strategy: isIOSDevice ? 'multi-cookie-ios' : 'standard',
+      deviceInfo: deviceInfo || 'unknown'
     });
-
-    response.cookie('access_token', token, cookieOptions);
-    
-    // For iOS devices, also set a backup cookie with different settings
-    if (isIOSDevice) {
-      response.cookie('ios_access_token', token, {
-        httpOnly: false, // Allow JS access as fallback
-        secure: isProduction,
-        sameSite: 'lax' as const,
-        maxAge,
-        path: '/',
-        // No domain for iOS
-      });
-      
-      // Also set in a simple format for iOS
-      response.cookie('auth_token', token, {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: 'strict' as const,
-        maxAge,
-        path: '/',
-      });
-    }
   }
 
   private clearAuthCookie(response: Response, deviceInfo?: any) {
     const isProduction = this.envConfig.isProduction;
     const isIOSDevice = deviceInfo?.isIOSSafari || false;
     
-    // Clear main cookie
-    const cookieOptions = {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: (isProduction && !isIOSDevice) ? 'none' as const : 'lax' as const,
-      path: '/',
-      ...(isProduction && !isIOSDevice && {
-        domain: '.vercel.app'
-      })
-    };
-
-    this.logger.log('Clearing auth cookie with options:', cookieOptions);
-
-    response.clearCookie('access_token', cookieOptions);
-    
-    // Clear iOS fallback cookies
     if (isIOSDevice) {
-      response.clearCookie('ios_access_token', {
-        secure: isProduction,
-        sameSite: 'lax',
-        path: '/',
-      });
+      // Clear all iOS cookie strategies
+      const cookieNames = ['access_token', 'ios_access_token', 'auth_token', 'session_token'];
+      const sameSiteOptions = ['strict', 'lax'] as const;
       
-      response.clearCookie('auth_token', {
+      cookieNames.forEach(name => {
+        sameSiteOptions.forEach(sameSite => {
+          response.clearCookie(name, {
+            httpOnly: name !== 'auth_token',
+            secure: isProduction,
+            sameSite,
+            path: '/',
+          });
+        });
+      });
+    } else {
+      // Standard clear
+      response.clearCookie('access_token', {
+        httpOnly: true,
         secure: isProduction,
-        sameSite: 'strict',
+        sameSite: isProduction ? 'none' : 'lax',
         path: '/',
+        ...(isProduction && {
+          domain: '.vercel.app'
+        })
       });
     }
+
+    this.logger.log('Clearing auth cookies for', isIOSDevice ? 'iOS device' : 'standard device');
   }
 }
