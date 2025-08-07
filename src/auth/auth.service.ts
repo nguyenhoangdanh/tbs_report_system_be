@@ -324,13 +324,16 @@ export class AuthService {
     }
   }
 
-  async logout(response: Response) {
-    this.logger.log('Logout request received');
+  async logout(response: Response, deviceInfo?: any) {
+    this.logger.log('Logout request received', { 
+      deviceInfo: deviceInfo || 'unknown',
+      timestamp: new Date().toISOString()
+    });
 
-    // Clear auth cookie
-    this.clearAuthCookie(response);
+    // Clear auth cookie with device info
+    this.clearAuthCookie(response, deviceInfo);
 
-    this.logger.log('Auth cookie cleared');
+    this.logger.log('Auth cookie cleared successfully');
     return { message: 'Logout successful' };
   }
 
@@ -501,58 +504,16 @@ export class AuthService {
     const isProduction = this.envConfig.isProduction;
     const isIOSDevice = deviceInfo?.isIOSSafari || false;
 
-    // For iOS Safari: Use multiple cookie strategies
-    if (isIOSDevice) {
-      // Strategy 1: Simple httpOnly cookie with strict sameSite
-      response.cookie('access_token', token, {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: 'strict' as const,
-        maxAge,
-        path: '/',
-      });
-
-      // Strategy 2: Lax sameSite backup
-      response.cookie('ios_access_token', token, {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: 'lax' as const,
-        maxAge,
-        path: '/',
-      });
-
-      // Strategy 3: Non-httpOnly for JS access (last resort)
-      response.cookie('auth_token', token, {
-        httpOnly: false,
-        secure: isProduction,
-        sameSite: 'lax' as const,
-        maxAge,
-        path: '/',
-      });
-
-      // Strategy 4: Session cookie (no maxAge)
-      response.cookie('session_token', token, {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: 'lax' as const,
-        path: '/',
-      });
-
-    } else {
-      // Standard cookie for non-iOS
-      const cookieOptions = {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: isProduction ? 'none' as const : 'lax' as const,
-        maxAge,
-        path: '/',
-        ...(isProduction && {
-          domain: '.vercel.app'
-        })
-      };
-
-      response.cookie('access_token', token, cookieOptions);
-    }
+    // ✅ SIMPLE: Only use access_token cookie - no multiple strategies
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      // ✅ CRITICAL: Use 'lax' for ALL devices to avoid iOS issues
+      sameSite: 'lax' as const,
+      maxAge,
+      path: '/',
+      // ✅ Don't set domain for better cross-browser compatibility
+    };
 
     this.logger.log('Setting auth cookie:', {
       tokenLength: token.length,
@@ -561,43 +522,48 @@ export class AuthService {
       durationDays: rememberMe ? 30 : 7,
       isProduction,
       isIOSDevice,
-      strategy: isIOSDevice ? 'multi-cookie-ios' : 'standard',
-      deviceInfo: deviceInfo || 'unknown'
+      cookieOptions
     });
+
+    // ✅ Set only ONE cookie
+    response.cookie('access_token', token, cookieOptions);
+    
+    // ✅ For iOS: Also set token in header as fallback (but only one cookie)
+    if (isIOSDevice) {
+      response.setHeader('X-Access-Token', token);
+      response.setHeader('X-iOS-Fallback', 'true');
+    }
   }
 
   private clearAuthCookie(response: Response, deviceInfo?: any) {
     const isProduction = this.envConfig.isProduction;
-    const isIOSDevice = deviceInfo?.isIOSSafari || false;
     
-    if (isIOSDevice) {
-      // Clear all iOS cookie strategies
-      const cookieNames = ['access_token', 'ios_access_token', 'auth_token', 'session_token'];
-      const sameSiteOptions = ['strict', 'lax'] as const;
-      
-      cookieNames.forEach(name => {
-        sameSiteOptions.forEach(sameSite => {
-          response.clearCookie(name, {
-            httpOnly: name !== 'auth_token',
-            secure: isProduction,
-            sameSite,
-            path: '/',
-          });
-        });
-      });
-    } else {
-      // Standard clear
+    // ✅ SIMPLE: Clear only access_token with same options used to set it
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax' as const,
+      path: '/',
+      // ✅ Don't set domain for better compatibility
+    };
+
+    this.logger.log('Clearing auth cookie with options:', cookieOptions);
+
+    // ✅ Clear the single cookie
+    response.clearCookie('access_token', cookieOptions);
+    
+    // ✅ Also try clearing with different variations to ensure cleanup
+    if (isProduction) {
+      // Try clearing with domain variations
       response.clearCookie('access_token', {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax',
-        path: '/',
-        ...(isProduction && {
-          domain: '.vercel.app'
-        })
+        ...cookieOptions,
+        domain: '.vercel.app'
+      });
+      
+      response.clearCookie('access_token', {
+        ...cookieOptions,
+        domain: 'tbsreportsystembe-production.up.railway.app'
       });
     }
-
-    this.logger.log('Clearing auth cookies for', isIOSDevice ? 'iOS device' : 'standard device');
   }
 }

@@ -74,8 +74,16 @@ export class AuthController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Logout user' })
   @ApiResponse({ status: 200, description: 'User logged out successfully' })
-  async logout(@Res({ passthrough: true }) response: Response) {
-    return this.authService.logout(response);
+  async logout(@Res({ passthrough: true }) response: Response, @Req() request: any) {
+    // ✅ Pass request to get device info for proper cookie clearing
+    const userAgent = request?.headers['user-agent'] || '';
+    const deviceInfo = {
+      isIOSSafari: /iPad|iPhone|iPod|Mac.*OS.*X/i.test(userAgent) && 
+                   /Safari/i.test(userAgent) && 
+                   !/Chrome|CriOS|EdgiOS/i.test(userAgent)
+    };
+    
+    return this.authService.logout(response, deviceInfo);
   }
 
   @Patch('change-password')
@@ -133,11 +141,11 @@ export class AuthController {
   // Enhanced iOS debugging endpoint
   @Post('check-cookie')
   @Public()
-  @ApiOperation({ summary: 'Check iOS detection and cookie compatibility' })
+  @ApiOperation({ summary: 'Check cookie compatibility and test cookie operations' })
   checkCookie(@Req() req: any, @Res({ passthrough: true }) response: Response) {
     const userAgent = req.headers['user-agent'] || '';
     
-    // Enhanced iOS detection
+    // Enhanced device detection
     const iosPattern = /iPad|iPhone|iPod/i;
     const macPattern = /Mac.*OS.*X/i;
     const safariPattern = /Safari/i;
@@ -153,33 +161,22 @@ export class AuthController {
     const isIOSSafari = isIOSDevice && isSafari && !isChrome;
     const isRealDevice = isIOS && !isSimulator;
     
-    // Check all possible cookies
+    // Check current cookies
     const allCookies = req.cookies || {};
     const cookieHeader = req.headers.cookie;
     
-    // Set multiple test cookies for iOS
+    // ✅ Set test cookie with same settings as auth cookie
     const testToken = `test-${Date.now()}`;
     const isProduction = process.env.NODE_ENV === 'production';
     
-    if (isIOSSafari) {
-      // Set multiple test cookies with different strategies
-      const strategies = [
-        { name: 'test-strict', sameSite: 'strict' as const },
-        { name: 'test-lax', sameSite: 'lax' as const },
-        { name: 'test-session' }, // No maxAge
-        { name: 'test-js', httpOnly: false },
-      ];
-      
-      strategies.forEach(strategy => {
-        response.cookie(strategy.name, testToken, {
-          httpOnly: strategy.httpOnly !== false,
-          secure: isProduction,
-          sameSite: strategy.sameSite || 'lax',
-          ...(strategy.name !== 'test-session' && { maxAge: 300000 }),
-          path: '/',
-        });
-      });
-    }
+    // Set test cookie
+    response.cookie('test_access_token', testToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax' as const,
+      maxAge: 300000, // 5 minutes
+      path: '/',
+    });
 
     return {
       success: true,
@@ -198,19 +195,14 @@ export class AuthController {
       cookies: {
         hasCookieHeader: !!cookieHeader,
         cookieHeaderLength: cookieHeader ? cookieHeader.length : 0,
-        cookieHeaderRaw: cookieHeader || 'undefined',
+        cookieHeaderRaw: cookieHeader ? cookieHeader.substring(0, 200) + '...' : 'undefined',
         
+        // ✅ Only check access_token
         hasAccessToken: !!allCookies['access_token'],
-        hasIOSToken: !!allCookies['ios_access_token'],
-        hasAuthToken: !!allCookies['auth_token'],
-        hasSessionToken: !!allCookies['session_token'],
+        accessTokenPreview: allCookies['access_token'] ? allCookies['access_token'].substring(0, 10) + '...' : null,
         
         allCookieKeys: Object.keys(allCookies),
         cookieCount: Object.keys(allCookies).length,
-        
-        // Cookie values (first 10 chars for security)
-        accessTokenPreview: allCookies['access_token'] ? allCookies['access_token'].substring(0, 10) + '...' : null,
-        iosTokenPreview: allCookies['ios_access_token'] ? allCookies['ios_access_token'].substring(0, 10) + '...' : null,
       },
       headers: {
         origin: req.headers.origin,
@@ -221,14 +213,24 @@ export class AuthController {
         'sec-ch-ua': req.headers['sec-ch-ua'],
         'sec-ch-ua-platform': req.headers['sec-ch-ua-platform']
       },
+      testCookie: {
+        name: 'test_access_token',
+        value: testToken,
+        settings: {
+          httpOnly: true,
+          secure: isProduction,
+          sameSite: 'lax',
+          maxAge: 300000,
+          path: '/'
+        }
+      },
       recommendations: {
-        shouldUseFallback: isIOSSafari,
-        cookieStrategy: isIOSSafari ? 'multi-strategy-ios' : 'standard',
+        cookieStrategy: 'single-access-token-lax',
         requiresSpecialHandling: isIOSSafari,
         isRealDeviceTest: isRealDevice,
         testAdvice: isRealDevice 
-          ? 'Test on real iOS device detected - results are reliable'
-          : 'Simulation detected - test on real iOS device for accurate results'
+          ? 'Real device test - results are reliable'
+          : 'Simulation detected - test on real device for accurate results'
       },
       timestamp: new Date().toISOString(),
     };

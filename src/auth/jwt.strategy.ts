@@ -16,21 +16,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
-        // Enhanced cookie extraction with ALL possible iOS cookie strategies
+        // ✅ SIMPLE: Only check access_token cookie
         (request: Request) => {
           const cookies = request?.cookies || {};
-          
-          // Try all possible cookie names in order of preference
-          const tokenSources = [
-            cookies['access_token'],
-            cookies['ios_access_token'], 
-            cookies['auth_token'],
-            cookies['session_token'],
-          ];
-          
-          const finalToken = tokenSources.find(token => token && token.length > 0);
-          
-          // Enhanced debug logging for production iOS debugging
+          const token = cookies['access_token'];
+
+          // Enhanced debug logging for production debugging
           if (this.envConfig.isProduction) {
             const userAgent = request?.headers?.['user-agent'] || '';
             const isIOS = /iPad|iPhone|iPod|Mac.*OS.*X/i.test(userAgent);
@@ -40,15 +31,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
               cookieKeys: cookies ? Object.keys(cookies) : [],
               cookieCount: cookies ? Object.keys(cookies).length : 0,
               
-              // Individual token checks
-              hasAccessToken: !!cookies['access_token'],
-              hasIOSToken: !!cookies['ios_access_token'],
-              hasAuthToken: !!cookies['auth_token'],
-              hasSessionToken: !!cookies['session_token'],
-              
-              finalToken: !!finalToken,
-              tokenLength: finalToken ? finalToken.length : 0,
-              tokenSource: finalToken ? tokenSources.findIndex(t => t === finalToken) + 1 : 0,
+              hasAccessToken: !!token,
+              tokenLength: token ? token.length : 0,
               
               isIOSDevice: isIOS,
               userAgent: userAgent?.substring(0, 50),
@@ -59,23 +43,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
               cookieHeader: request?.headers?.cookie || 'undefined',
               cookieHeaderLength: request?.headers?.cookie?.length || 0,
               
-              // Additional iOS debugging
+              // Additional debugging
               isSafari: /Safari/i.test(userAgent) && !/Chrome|CriOS/i.test(userAgent),
               isSimulator: userAgent.includes('Simulator'),
               
-              // Request method and path
+              // Request info
               method: request?.method,
               path: request?.url,
             });
           }
 
-          return finalToken;
+          return token;
         },
         
-        // Fallback to Authorization header
+        // ✅ Fallback to Authorization header
         ExtractJwt.fromAuthHeaderAsBearerToken(),
         
-        // iOS fallback: Check custom header
+        // ✅ iOS fallback: Check custom header
         (request: Request) => {
           return request?.headers?.['x-access-token'] as string;
         }
