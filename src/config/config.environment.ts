@@ -150,6 +150,7 @@ export class EnvironmentConfig {
       credentials: true, // Essential for cookies
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
+        // Standard headers
         'Origin',
         'X-Requested-With',
         'Content-Type',
@@ -158,10 +159,27 @@ export class EnvironmentConfig {
         'Cache-Control',
         'Cookie',
         'Set-Cookie',
-        'X-Access-Token',     // iOS fallback
-        'X-iOS-Version',      // iOS detection
-        'X-iOS-Fallback',     // iOS handling flag
-        'User-Agent'
+        'User-Agent',
+        
+        // iOS-specific headers - MUST be included for CORS
+        'X-iOS-Device',
+        'X-iOS-Version', 
+        'X-Access-Token',
+        'X-iOS-Fallback',
+        
+        // Additional platform headers
+        'X-Platform',
+        'X-Device-Type',
+        'X-App-Version',
+        
+        // Security headers
+        'X-Content-Type-Options',
+        'X-Frame-Options',
+        'X-XSS-Protection',
+        'Access-Control-Allow-Credentials',
+        'Access-Control-Allow-Origin',
+        'Access-Control-Allow-Headers',
+        'Access-Control-Allow-Methods'
       ],
       exposedHeaders: [
         'Set-Cookie', 
