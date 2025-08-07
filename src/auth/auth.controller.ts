@@ -31,8 +31,8 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
+   private readonly logger = new Logger(AuthController.name);
   constructor(
-    private readonly logger = new Logger(AuthController.name),
     private readonly authService: AuthService) { }
 
   @Post('register')
