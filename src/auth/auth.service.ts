@@ -503,59 +503,76 @@ export class AuthService {
 
     const isProduction = this.envConfig.isProduction;
 
-    // ✅ PRODUCTION FIX: Ultra simple settings that work everywhere
+    // ✅ CRITICAL FIX: Use proper production settings
     const cookieOptions = {
       httpOnly: true,
-      secure: false, // ✅ CRITICAL: Set to false even in production for testing
-      sameSite: 'lax' as const, // ✅ Always lax - most compatible
+      secure: isProduction, // ✅ MUST be true for HTTPS in production
+      sameSite: isProduction ? 'none' as const : 'lax' as const, // ✅ CRITICAL: Use 'none' for cross-origin in production
       maxAge,
       path: '/',
-      // ✅ NEVER set domain at all
+      // ✅ NEVER set domain - let browser handle it
     };
 
-    this.logger.log('Setting auth cookie (ultra simple):', {
+    this.logger.log('Setting auth cookie (production-fixed):', {
       tokenLength: token.length,
       maxAge,
       rememberMe,
       isProduction,
-      cookieOptions
+      cookieOptions,
+      userAgent: deviceInfo?.userAgent?.substring(0, 50) || 'unknown'
     });
 
-    // ✅ Set single cookie with minimal options
+    // ✅ Set cookie with proper production settings
     response.cookie('access_token', token, cookieOptions);
     
-    // ✅ Always set fallback header for all devices in production
+    // ✅ ALWAYS set fallback header in production
     if (isProduction) {
       response.setHeader('X-Access-Token', token);
       response.setHeader('X-Cookie-Fallback', 'true');
+      response.setHeader('X-Cookie-Settings', JSON.stringify(cookieOptions));
+    }
+
+    // ✅ For iOS: Set additional fallback
+    if (deviceInfo?.isIOSSafari) {
+      response.setHeader('X-iOS-Fallback', 'true');
+      response.setHeader('X-iOS-Version', deviceInfo.version || 'unknown');
     }
   }
 
   private clearAuthCookie(response: Response, deviceInfo?: any) {
     const isProduction = this.envConfig.isProduction;
     
-    // ✅ PRODUCTION FIX: Minimal clear options
+    // ✅ CRITICAL FIX: Use EXACT same options as set
     const cookieOptions = {
       httpOnly: true,
-      secure: false, // ✅ CRITICAL: Match the set options exactly
-      sameSite: 'lax' as const,
+      secure: isProduction, // ✅ MUST match set options
+      sameSite: isProduction ? 'none' as const : 'lax' as const, // ✅ CRITICAL: Must match
       path: '/',
     };
 
-    this.logger.log('Clearing auth cookie (ultra simple):', cookieOptions);
+    this.logger.log('Clearing auth cookie (production-fixed):', cookieOptions);
 
-    // ✅ Multiple clear attempts with different approaches
+    // ✅ Clear with exact matching options
     response.clearCookie('access_token', cookieOptions);
-    response.clearCookie('access_token', { path: '/' });
-    response.clearCookie('access_token');
     
-    // ✅ Set expired cookie as final method
-    response.cookie('access_token', '', {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax' as const,
-      path: '/',
-      expires: new Date(0)
-    });
+    // ✅ Additional clearing methods for production
+    if (isProduction) {
+      // Method 1: Clear with just path
+      response.clearCookie('access_token', { path: '/' });
+      
+      // Method 2: Clear with no options
+      response.clearCookie('access_token');
+      
+      // Method 3: Set expired cookie as final fallback
+      response.cookie('access_token', '', {
+        ...cookieOptions,
+        expires: new Date(0),
+        maxAge: 0
+      });
+    } else {
+      // Development clearing
+      response.clearCookie('access_token', { path: '/' });
+      response.clearCookie('access_token');
+    }
   }
 }

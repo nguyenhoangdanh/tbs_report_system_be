@@ -7,6 +7,7 @@ import {
   Query,
   Patch,
   Req,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,7 +31,9 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly logger = new Logger(AuthController.name),
+    private readonly authService: AuthService) { }
 
   @Post('register')
   @Public()
@@ -343,6 +346,75 @@ export class AuthController {
         allowedOrigin: origin.endsWith('.vercel.app') ? 'allowed' : 'check-config'
       },
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  // Enhanced production debugging endpoint
+  @Post('debug-cookie-production')
+  @Public()
+  @ApiOperation({ summary: 'Debug production cookie issues' })
+  debugCookieProduction(@Req() req: any, @Res({ passthrough: true }) response: Response) {
+    const userAgent = req.headers['user-agent'] || '';
+    const origin = req.headers.origin || '';
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    // Set test cookie with EXACT production settings
+    const testToken = `debug-${Date.now()}`;
+    
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction, // true in production
+      sameSite: isProduction ? 'none' as const : 'lax' as const, // none in production
+      maxAge: 300000, // 5 minutes
+      path: '/',
+    };
+    
+    this.logger.log('🔍 Setting debug cookie with production settings:', {
+      isProduction,
+      cookieOptions,
+      origin,
+      userAgent: userAgent.substring(0, 50)
+    });
+    
+    // Set test cookie
+    response.cookie('debug_production_cookie', testToken, cookieOptions);
+    
+    // Set fallback headers
+    response.setHeader('X-Access-Token', testToken);
+    response.setHeader('X-Cookie-Fallback', 'true');
+    response.setHeader('X-Cookie-Settings', JSON.stringify(cookieOptions));
+
+    return {
+      success: true,
+      debug: {
+        isProduction,
+        origin,
+        userAgent: userAgent.substring(0, 100),
+        timestamp: new Date().toISOString(),
+        testCookie: {
+          name: 'debug_production_cookie',
+          value: testToken,
+          options: cookieOptions
+        },
+        fallbackHeaders: {
+          'X-Access-Token': testToken,
+          'X-Cookie-Fallback': 'true',
+          'X-Cookie-Settings': JSON.stringify(cookieOptions)
+        },
+        currentCookies: {
+          hasCookieHeader: !!req.headers.cookie,
+          cookieHeader: req.headers.cookie || 'none',
+          parsedCookies: req.cookies || {},
+          cookieCount: req.cookies ? Object.keys(req.cookies).length : 0
+        },
+        instructions: [
+          '1. Check browser dev tools → Application → Cookies',
+          '2. Look for debug_production_cookie',
+          '3. Check if SameSite=None and Secure=true in production',
+          '4. Verify HTTPS is used for cookie to work',
+          '5. Check localStorage for fallback token'
+        ]
+      }
     };
   }
 }

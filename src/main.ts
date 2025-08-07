@@ -96,7 +96,6 @@ async function bootstrap() {
     // Apply CORS configuration with enhanced production support
     app.enableCors({
       origin: (origin, callback) => {
-        // ✅ PRODUCTION FIX: Be more permissive with origins
         const allowedOrigins = [
           'https://weeklyreport-orpin.vercel.app',
           'https://weeklyreportsystem-mu.vercel.app', 
@@ -131,7 +130,7 @@ async function bootstrap() {
         console.warn(`❌ Blocked origin: ${origin}`);
         callback(new Error('Not allowed by CORS'), false);
       },
-      credentials: true,
+      credentials: true, // ✅ CRITICAL for cookies
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
         'Origin',
@@ -143,12 +142,16 @@ async function bootstrap() {
         'Set-Cookie',
         'X-Access-Token',
         'X-Cookie-Fallback',
+        'X-Cookie-Settings', // ✅ Added for debugging
         'User-Agent'
       ],
       exposedHeaders: [
         'Set-Cookie',
         'X-Access-Token', 
-        'X-Cookie-Fallback'
+        'X-Cookie-Fallback',
+        'X-Cookie-Settings', // ✅ Added for debugging
+        'X-iOS-Fallback',
+        'X-iOS-Version'
       ],
       optionsSuccessStatus: 200,
       preflightContinue: false,
@@ -157,7 +160,7 @@ async function bootstrap() {
     console.log('✅ CORS configuration applied (production-optimized)');
     console.log(`🌐 Primary origin: https://weeklyreport-orpin.vercel.app`);
     console.log(`🍪 Credentials enabled: true`);
-    console.log(`🔒 Cookie settings: secure=false, sameSite=lax (production-compatible)`);
+    console.log(`🔒 Cookie settings: secure=${nodeEnv === 'production'}, sameSite=${nodeEnv === 'production' ? 'none' : 'lax'}`);
 
     app.setGlobalPrefix('api', {
       exclude: [
