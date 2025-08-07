@@ -93,11 +93,10 @@ async function bootstrap() {
     const envConfig = app.get(EnvironmentConfig);
     const corsConfig = envConfig.getCorsConfig();
 
-    // Apply CORS configuration with enhanced debugging for production
+    // Apply CORS configuration with enhanced iOS support
     app.enableCors({
       ...corsConfig,
-      credentials: true, // ✅ Đúng - server-side boolean
-      // Enhanced CORS for production debugging
+      credentials: true,
       optionsSuccessStatus: 200,
       preflightContinue: false,
       allowedHeaders: [
@@ -106,8 +105,12 @@ async function bootstrap() {
         'Content-Type',
         'Accept',
         'Authorization',
-        'X-iOS-Version',      // ✅ Detect iOS version
-        'User-Agent',         // ✅ Detect iOS Safari
+        'Cookie',
+        'Set-Cookie',
+        'X-Access-Token',        // iOS fallback header
+        'X-iOS-Version',         // iOS version detection
+        'X-iOS-Fallback',        // iOS fallback indicator
+        'User-Agent',
         'X-Content-Type-Options',
         'X-Frame-Options',
         'X-XSS-Protection',
@@ -115,6 +118,12 @@ async function bootstrap() {
         'Access-Control-Allow-Origin',
         'Access-Control-Allow-Headers',
         'Access-Control-Allow-Methods'
+      ],
+      exposedHeaders: [
+        'Set-Cookie',
+        'X-Access-Token',        // Expose iOS fallback token
+        'X-iOS-Fallback',        
+        'X-iOS-Version'
       ],
     });
     

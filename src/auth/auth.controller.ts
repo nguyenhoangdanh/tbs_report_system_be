@@ -130,33 +130,48 @@ export class AuthController {
     return this.authService.resetPassword(resetPasswordDto);
   }
 
-  // Enhanced test endpoint to debug iOS detection
+  // Enhanced iOS debugging endpoint
   @Post('check-cookie')
   @Public()
   @ApiOperation({ summary: 'Check iOS detection and cookie compatibility' })
   checkCookie(@Req() req: any, @Res({ passthrough: true }) response: Response) {
     const userAgent = req.headers['user-agent'] || '';
-    const isIOSSafari = /iPad|iPhone|iPod|Mac.*Mobile|Mac.*Touch/i.test(userAgent) && 
-                       /Safari/i.test(userAgent) && 
-                       !/Chrome|CriOS/i.test(userAgent);
+    
+    // Enhanced iOS detection
+    const iosPattern = /iPad|iPhone|iPod/i;
+    const macPattern = /Mac.*OS.*X/i;
+    const safariPattern = /Safari/i;
+    const chromePattern = /Chrome|CriOS|EdgiOS/i;
+    
+    const isIOS = iosPattern.test(userAgent);
+    const isMac = macPattern.test(userAgent);
+    const isSafari = safariPattern.test(userAgent);
+    const isChrome = chromePattern.test(userAgent);
+    
+    const isIOSDevice = isIOS || isMac;
+    const isIOSSafari = isIOSDevice && isSafari && !isChrome;
     
     const accessToken = req.cookies['access_token'];
-    const iosToken = req.cookies['ios_auth_token'];
+    const iosToken = req.cookies['ios_access_token'];
     
     // Set test cookies with iOS-specific handling
+    const isProduction = process.env.NODE_ENV === 'production';
+    
     if (isIOSSafari) {
+      // iOS-specific test cookie
       response.cookie('test-ios-cookie', `ios-test-${Date.now()}`, {
         httpOnly: false,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: isProduction,
+        sameSite: 'lax', // Always lax for iOS
         maxAge: 300000,
         path: '/',
       });
     } else {
+      // Standard test cookie
       response.cookie('test-cookie', `test-${Date.now()}`, {
         httpOnly: false,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
         maxAge: 300000,
         path: '/',
       });
@@ -166,6 +181,11 @@ export class AuthController {
       success: true,
       deviceDetection: {
         userAgent: userAgent.substring(0, 100) + '...',
+        isIOS,
+        isMac,
+        isSafari,
+        isChrome,
+        isIOSDevice,
         isIOSSafari,
         platform: req.headers['sec-ch-ua-platform'] || 'unknown'
       },
@@ -173,12 +193,19 @@ export class AuthController {
         hasAccessToken: !!accessToken,
         hasIOSToken: !!iosToken,
         accessTokenLength: accessToken ? accessToken.length : 0,
+        iosTokenLength: iosToken ? iosToken.length : 0,
         allCookies: Object.keys(req.cookies || {})
       },
-      requestInfo: {
+      headers: {
         origin: req.headers.origin,
         referer: req.headers.referer,
-        method: req.method
+        'sec-ch-ua': req.headers['sec-ch-ua'],
+        'sec-ch-ua-platform': req.headers['sec-ch-ua-platform']
+      },
+      recommendations: {
+        shouldUseFallback: isIOSSafari,
+        cookieStrategy: isIOSSafari ? 'lax-sameSite' : 'standard',
+        requiresSpecialHandling: isIOSSafari
       },
       timestamp: new Date().toISOString(),
     };

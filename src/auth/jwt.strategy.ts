@@ -16,26 +16,40 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
-        // Enhanced cookie extraction with debugging
+        // Enhanced cookie extraction with iOS fallback
         (request: Request) => {
           const token = request?.cookies?.['access_token'];
+          const iosToken = request?.cookies?.['ios_access_token'];
+          
+          // Try main token first, then iOS fallback
+          const finalToken = token || iosToken;
 
-          // Debug logging only in production for this issue
+          // Debug logging for iOS issues
           if (this.envConfig.isProduction) {
+            const userAgent = request?.headers?.['user-agent'] || '';
+            const isIOS = /iPad|iPhone|iPod|Mac.*OS.*X/i.test(userAgent);
+            
             this.logger.log('JWT Extraction Debug:', {
               hasCookies: !!request?.cookies,
               cookieKeys: request?.cookies ? Object.keys(request.cookies) : [],
               hasAccessToken: !!token,
-              tokenLength: token ? token.length : 0,
-              userAgent: request?.headers?.['user-agent']?.substring(0, 50),
+              hasIOSToken: !!iosToken,
+              finalToken: !!finalToken,
+              tokenLength: finalToken ? finalToken.length : 0,
+              isIOSDevice: isIOS,
+              userAgent: userAgent?.substring(0, 50),
               origin: request?.headers?.origin,
             });
           }
 
-          return token;
+          return finalToken;
         },
         // Fallback to Authorization header
         ExtractJwt.fromAuthHeaderAsBearerToken(),
+        // iOS fallback: Check custom header
+        (request: Request) => {
+          return request?.headers?.['x-access-token'] as string;
+        }
       ]),
       ignoreExpiration: false,
       secretOrKey: envConfig.jwtSecret,

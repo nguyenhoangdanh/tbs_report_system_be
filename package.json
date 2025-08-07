@@ -13,6 +13,7 @@
     "start": "node dist/src/main.js",
     "start:dev": "dotenv -e .env.local -- nest start --watch",
     "start:debug": "dotenv -e .env.local -- nest start --debug --watch",
+
     "db:generate": "npx prisma generate",
     "db:studio": "dotenv -e .env.local -- npx prisma studio",
     "db:studio:prod": "dotenv -e .env.production -- npx prisma studio",
@@ -22,12 +23,14 @@
     "local:migrate": "dotenv -e .env.local -- npx prisma migrate dev",
     "local:migrate:reset": "dotenv -e .env.local -- npx prisma migrate reset --force",
     "local:db:push": "dotenv -e .env.local -- npx prisma db push",
+
     "prod:setup": "dotenv -e .env.production -- npx prisma generate && dotenv -e .env.production -- npx prisma migrate deploy",
     "prod:import": "dotenv -e .env.production -- npx tsx prisma/import-all-data-from-excel.ts",
     "prod:seed": "dotenv -e .env.production -- npx tsx prisma/seed.ts",
     "prod:migrate": "dotenv -e .env.production -- npx prisma migrate deploy",
     "prod:db:push": "dotenv -e .env.production -- npx prisma db push",
     "prod:migrate:status": "dotenv -e .env.production -- npx prisma migrate status",
+
     "deploy:prod": "./scripts/deploy.sh",
     "deploy:quick": "export PATH=\"/home/hoangdanh2000/.fly/bin:$PATH\" && flyctl deploy --strategy immediate",
     "deploy:railway": "./scripts/deploy-railway.sh",

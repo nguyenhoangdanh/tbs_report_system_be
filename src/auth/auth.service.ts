@@ -29,16 +29,34 @@ export class AuthService {
     private readonly envConfig: EnvironmentConfig,
   ) {}
 
-  // iOS Detection utility
-  private detectiOSDevice(userAgent: string): boolean {
-    const iosPattern = /iPad|iPhone|iPod|Mac.*Mobile|Mac.*Touch/i;
+  // Enhanced iOS Detection utility
+  private detectiOSDevice(userAgent: string): { isIOS: boolean; isSafari: boolean; isIOSSafari: boolean; version?: string } {
+    const iosPattern = /iPad|iPhone|iPod/i;
+    const macPattern = /Mac.*OS.*X/i;
     const safariPattern = /Safari/i;
-    const chromePattern = /Chrome|CriOS/i;
+    const chromePattern = /Chrome|CriOS|EdgiOS/i;
+    const firefoxPattern = /FxiOS/i;
     
+    // More specific iOS detection
     const isIOS = iosPattern.test(userAgent);
-    const isSafari = safariPattern.test(userAgent) && !chromePattern.test(userAgent);
+    const isMac = macPattern.test(userAgent);
+    const isSafari = safariPattern.test(userAgent);
+    const isChrome = chromePattern.test(userAgent);
+    const isFirefox = firefoxPattern.test(userAgent);
     
-    return isIOS && isSafari;
+    // iOS Safari is Safari on iOS without Chrome/Firefox
+    const isIOSSafari = (isIOS || isMac) && isSafari && !isChrome && !isFirefox;
+    
+    // Extract iOS version if available
+    const versionMatch = userAgent.match(/OS (\d+)_(\d+)/);
+    const version = versionMatch ? `${versionMatch[1]}.${versionMatch[2]}` : undefined;
+    
+    return {
+      isIOS: isIOS || isMac,
+      isSafari,
+      isIOSSafari,
+      version
+    };
   }
 
   async register(registerDto: RegisterDto) {
@@ -143,12 +161,12 @@ export class AuthService {
     const { employeeCode, password } = loginDto;
 
     try {
-      // Detect iOS Safari
+      // Enhanced iOS/macOS detection
       const userAgent = request?.headers['user-agent'] || '';
-      const isIOSSafari = this.detectiOSDevice(userAgent);
+      const deviceInfo = this.detectiOSDevice(userAgent);
       
       if (process.env.NODE_ENV !== 'production') {
-        this.logger.log(`Device Detection: iOS Safari = ${isIOSSafari}, UA: ${userAgent.substring(0, 100)}`);
+        this.logger.log(`Device Detection:`, deviceInfo, `UA: ${userAgent.substring(0, 100)}`);
       }
 
       // Validate input
@@ -263,12 +281,12 @@ export class AuthService {
         secret: this.envConfig.jwtSecret,
       });
 
-      // Set cookie with iOS-specific handling
+      // Set cookie with enhanced iOS handling
       if (response) {
-        this.setAuthCookie(response, access_token, rememberMe, isIOSSafari);
+        this.setAuthCookie(response, access_token, rememberMe, deviceInfo);
       }
 
-      // Return user data with iOS-specific headers
+      // Return user data with iOS-specific data
       const { password: _, ...userWithoutPassword } = user;
       const userResponse = {
         ...userWithoutPassword,
@@ -277,17 +295,22 @@ export class AuthService {
         updatedAt: userWithoutPassword.updatedAt.toISOString(),
       };
 
-      // For iOS Safari, also set token in response header as fallback
-      if (isIOSSafari && response) {
+      // For iOS devices, also set token in response headers as fallback
+      if (deviceInfo.isIOSSafari && response) {
         response.setHeader('X-Access-Token', access_token);
         response.setHeader('X-iOS-Fallback', 'true');
+        response.setHeader('X-iOS-Version', deviceInfo.version || 'unknown');
       }
 
       return {
         access_token,
         user: userResponse,
         message: 'Đăng nhập thành công',
-        ...(isIOSSafari && { iosDetected: true, fallbackToken: access_token })
+        ...(deviceInfo.isIOSSafari && { 
+          iosDetected: true, 
+          fallbackToken: access_token,
+          deviceInfo: deviceInfo
+        })
       };
 
     } catch (error) {
@@ -342,9 +365,9 @@ export class AuthService {
   }
 
   async refreshToken(userId: string, response: Response, rememberMe = false, request?: any): Promise<AuthResponseDto> {
-    // Detect iOS Safari
+    // Enhanced iOS detection
     const userAgent = request?.headers['user-agent'] || '';
-    const isIOSSafari = this.detectiOSDevice(userAgent);
+    const deviceInfo = this.detectiOSDevice(userAgent);
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -370,10 +393,10 @@ export class AuthService {
     });
 
     // Update cookie with iOS handling
-    this.setAuthCookie(response, access_token, rememberMe, isIOSSafari);
+    this.setAuthCookie(response, access_token, rememberMe, deviceInfo);
 
-    // For iOS Safari, also set token in response header
-    if (isIOSSafari) {
+    // For iOS devices, also set token in response header
+    if (deviceInfo.isIOSSafari) {
       response.setHeader('X-Access-Token', access_token);
       response.setHeader('X-iOS-Fallback', 'true');
     }
@@ -389,7 +412,11 @@ export class AuthService {
       access_token,
       user: userResponse,
       message: 'Token refreshed successfully',
-      ...(isIOSSafari && { iosDetected: true, fallbackToken: access_token })
+      ...(deviceInfo.isIOSSafari && { 
+        iosDetected: true, 
+        fallbackToken: access_token,
+        deviceInfo: deviceInfo 
+      })
     };
   }
 
@@ -466,19 +493,20 @@ export class AuthService {
     };
   }
 
-  private setAuthCookie(response: Response, token: string, rememberMe = false, isIOSSafari = false) {
+  private setAuthCookie(response: Response, token: string, rememberMe = false, deviceInfo?: any) {
     const maxAge = rememberMe
       ? 30 * 24 * 60 * 60 * 1000  // 30 days
       : 7 * 24 * 60 * 60 * 1000;  // 7 days
 
     const isProduction = this.envConfig.isProduction;
+    const isIOSDevice = deviceInfo?.isIOSSafari || false;
 
-    // iOS-specific cookie strategy
+    // iOS Safari has very specific cookie requirements
     const cookieOptions = {
       httpOnly: true,
-      secure: isProduction,
-      // iOS Safari: Always use 'lax' instead of 'none' for better compatibility
-      sameSite: (isProduction && !isIOSSafari) ? 'none' as const : 'lax' as const,
+      secure: isProduction, // Always secure in production
+      // Critical: iOS Safari needs 'lax' sameSite, never 'none'
+      sameSite: (isProduction && !isIOSDevice) ? 'none' as const : 'lax' as const,
       maxAge,
       path: '/',
     };
@@ -489,22 +517,37 @@ export class AuthService {
       rememberMe,
       durationDays: rememberMe ? 30 : 7,
       isProduction,
-      isIOSSafari,
-      secure: cookieOptions.secure,
-      sameSite: cookieOptions.sameSite,
+      isIOSDevice,
+      deviceInfo: deviceInfo || 'unknown',
+      cookieOptions: {
+        secure: cookieOptions.secure,
+        sameSite: cookieOptions.sameSite,
+        domain: (cookieOptions as any).domain || 'not-set'
+      }
     });
 
     response.cookie('access_token', token, cookieOptions);
     
+    // For iOS devices, also set a backup cookie with different settings
+    if (isIOSDevice && isProduction) {
+      response.cookie('ios_access_token', token, {
+        httpOnly: false, // Allow JS access as fallback
+        secure: true,
+        sameSite: 'lax' as const,
+        maxAge,
+        path: '/',
+      });
+    }
   }
 
-  private clearAuthCookie(response: Response, isIOSSafari = false) {
+  private clearAuthCookie(response: Response, deviceInfo?: any) {
     const isProduction = this.envConfig.isProduction;
+    const isIOSDevice = deviceInfo?.isIOSSafari || false;
     
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
-      sameSite: (isProduction && !isIOSSafari) ? 'none' as const : 'lax' as const,
+      sameSite: (isProduction && !isIOSDevice) ? 'none' as const : 'lax' as const,
       path: '/',
     };
 
@@ -512,9 +555,9 @@ export class AuthService {
 
     response.clearCookie('access_token', cookieOptions);
     
-    // Clear iOS fallback cookie
-    if (isIOSSafari && isProduction) {
-      response.clearCookie('ios_auth_token', {
+    // Clear iOS fallback cookies
+    if (isIOSDevice && isProduction) {
+      response.clearCookie('ios_access_token', {
         secure: true,
         sameSite: 'lax',
         path: '/',
