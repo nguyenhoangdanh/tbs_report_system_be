@@ -89,7 +89,8 @@ export class EnvironmentConfig {
   }
 
   get cookieDomain(): string {
-    return this.configService.get<string>('COOKIE_DOMAIN') || '';
+    // ✅ ALWAYS return empty - never set domain
+    return '';
   }
 
   get cookieSecure(): boolean {
@@ -150,36 +151,17 @@ export class EnvironmentConfig {
       credentials: true, // Essential for cookies
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
-        // Standard headers
         'Origin',
         'X-Requested-With',
         'Content-Type',
         'Accept',
         'Authorization',
-        'Cache-Control',
         'Cookie',
         'Set-Cookie',
-        'User-Agent',
-        
-        // iOS-specific headers - MUST be included for CORS
-        'X-iOS-Device',
-        'X-iOS-Version', 
         'X-Access-Token',
         'X-iOS-Fallback',
-        
-        // Additional platform headers
-        'X-Platform',
-        'X-Device-Type',
-        'X-App-Version',
-        
-        // Security headers
-        'X-Content-Type-Options',
-        'X-Frame-Options',
-        'X-XSS-Protection',
-        'Access-Control-Allow-Credentials',
-        'Access-Control-Allow-Origin',
-        'Access-Control-Allow-Headers',
-        'Access-Control-Allow-Methods'
+        'X-iOS-Version',
+        'User-Agent'
       ],
       exposedHeaders: [
         'Set-Cookie', 

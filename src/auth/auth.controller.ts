@@ -235,4 +235,53 @@ export class AuthController {
       timestamp: new Date().toISOString(),
     };
   }
+
+  // Enhanced test endpoint for cookie clearing
+  @Post('test-cookie-clear')
+  @Public()
+  @ApiOperation({ summary: 'Test cookie clearing functionality' })
+  testCookieClear(@Req() req: any, @Res({ passthrough: true }) response: Response) {
+    const userAgent = req.headers['user-agent'] || '';
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    // First set a test cookie
+    const testToken = `test-${Date.now()}`;
+    response.cookie('access_token', testToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax' as const,
+      maxAge: 60000, // 1 minute
+      path: '/',
+    });
+    
+    // Then immediately clear it using the same method as logout
+    response.clearCookie('access_token', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax' as const,
+      path: '/',
+    });
+    
+    // Additional clearing attempts
+    response.clearCookie('access_token');
+    response.clearCookie('access_token', { path: '/' });
+    response.clearCookie('access_token', {
+      secure: isProduction,
+      path: '/'
+    });
+
+    return {
+      success: true,
+      message: 'Cookie set and cleared with simple options',
+      testCookie: {
+        name: 'access_token',
+        value: testToken,
+        wasSet: true,
+        wasCleared: true,
+        clearingMethods: 4
+      },
+      instructions: 'Check browser dev tools to verify cookie was properly cleared',
+      timestamp: new Date().toISOString(),
+    };
+  }
 }

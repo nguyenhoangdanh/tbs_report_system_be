@@ -502,34 +502,30 @@ export class AuthService {
       : 7 * 24 * 60 * 60 * 1000;  // 7 days
 
     const isProduction = this.envConfig.isProduction;
-    const isIOSDevice = deviceInfo?.isIOSSafari || false;
 
-    // ✅ SIMPLE: Only use access_token cookie - no multiple strategies
+    // ✅ ULTRA SIMPLE: Same settings for ALL devices and environments
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
-      // ✅ CRITICAL: Use 'lax' for ALL devices to avoid iOS issues
-      sameSite: 'lax' as const,
+      sameSite: 'lax' as const, // Always lax - works everywhere
       maxAge,
       path: '/',
-      // ✅ Don't set domain for better cross-browser compatibility
+      // ✅ NEVER set domain - let browser handle it automatically
     };
 
-    this.logger.log('Setting auth cookie:', {
+    this.logger.log('Setting auth cookie (simple):', {
       tokenLength: token.length,
       maxAge,
       rememberMe,
-      durationDays: rememberMe ? 30 : 7,
       isProduction,
-      isIOSDevice,
       cookieOptions
     });
 
-    // ✅ Set only ONE cookie
+    // ✅ Set single cookie with simple options
     response.cookie('access_token', token, cookieOptions);
     
-    // ✅ For iOS: Also set token in header as fallback (but only one cookie)
-    if (isIOSDevice) {
+    // ✅ For iOS: Set fallback header only (no extra cookies)
+    if (deviceInfo?.isIOSSafari) {
       response.setHeader('X-Access-Token', token);
       response.setHeader('X-iOS-Fallback', 'true');
     }
@@ -538,32 +534,31 @@ export class AuthService {
   private clearAuthCookie(response: Response, deviceInfo?: any) {
     const isProduction = this.envConfig.isProduction;
     
-    // ✅ SIMPLE: Clear only access_token with same options used to set it
+    // ✅ ULTRA SIMPLE: Same options used to set cookie
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
       sameSite: 'lax' as const,
       path: '/',
-      // ✅ Don't set domain for better compatibility
+      // ✅ NEVER set domain
     };
 
-    this.logger.log('Clearing auth cookie with options:', cookieOptions);
+    this.logger.log('Clearing auth cookie (simple):', cookieOptions);
 
-    // ✅ Clear the single cookie
+    // ✅ Clear with exact same options
     response.clearCookie('access_token', cookieOptions);
     
-    // ✅ Also try clearing with different variations to ensure cleanup
-    if (isProduction) {
-      // Try clearing with domain variations
-      response.clearCookie('access_token', {
-        ...cookieOptions,
-        domain: '.vercel.app'
-      });
-      
-      response.clearCookie('access_token', {
-        ...cookieOptions,
-        domain: 'tbsreportsystembe-production.up.railway.app'
-      });
-    }
+    // ✅ Additional clearing attempts with minimal variations
+    // Try with no options (browser default)
+    response.clearCookie('access_token');
+    
+    // Try with just path
+    response.clearCookie('access_token', { path: '/' });
+    
+    // Try with secure flag matching
+    response.clearCookie('access_token', {
+      secure: isProduction,
+      path: '/'
+    });
   }
 }
