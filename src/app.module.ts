@@ -19,6 +19,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { CloudflareR2Service } from './common/r2.service';
 
 @Module({
   imports: [
@@ -26,13 +27,15 @@ import { join } from 'path';
     ConfigModule,
 
     // Conditionally serve static files only in development
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', 'uploads'),
+      serveRoot: '/uploads',
+      exclude: ['/api*'],
+    }),
+    
+    // Serve public files only in development  
     ...(process.env.NODE_ENV !== 'production'
       ? [
-          ServeStaticModule.forRoot({
-            rootPath: join(__dirname, '..', 'uploads'),
-            serveRoot: '/uploads',
-            exclude: ['/api*'],
-          }),
           ServeStaticModule.forRoot({
             rootPath: join(__dirname, '..', 'public'),
             serveRoot: '/',
@@ -59,6 +62,7 @@ import { join } from 'path';
     AppService,
     PrismaService,
     EnvironmentConfig,
+    CloudflareR2Service, // Replace FirebaseService with CloudflareR2Service
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,

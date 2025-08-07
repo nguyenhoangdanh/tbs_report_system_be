@@ -3,7 +3,50 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class EnvironmentConfig {
-  constructor(private configService: ConfigService) {}
+  // // Database configuration
+  // readonly databaseUrl: string;
+  // readonly directUrl: string;
+
+  // // JWT configuration
+  // readonly jwtSecret: string;
+  // readonly jwtExpiresIn: string;
+
+  // // Frontend configuration
+  // readonly frontendUrl: string;
+
+  // // Cookie configuration
+  // readonly cookieDomain: string;
+  // readonly cookieSecure: boolean;
+
+  // Firebase configuration
+  readonly firebaseProjectId: string;
+  readonly firebaseStorageBucket: string;
+  readonly firebaseServiceAccount?: string;
+  readonly firebasePrivateKey?: string;
+  readonly firebaseClientEmail?: string;
+
+  // Cloudflare R2 Configuration (replace Firebase config)
+  readonly r2AccountId: string;
+  readonly r2BucketName: string;
+  readonly r2AccessKeyId: string;
+  readonly r2SecretAccessKey: string;
+  readonly r2PublicUrl: string;
+
+  constructor(private configService: ConfigService) {
+    // Firebase configuration
+    this.firebaseProjectId = process.env.FIREBASE_PROJECT_ID || '';
+    this.firebaseStorageBucket = process.env.FIREBASE_STORAGE_BUCKET || '';
+    this.firebaseServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+    this.firebasePrivateKey = process.env.FIREBASE_PRIVATE_KEY;
+    this.firebaseClientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+
+    // Cloudflare R2 configuration
+    this.r2AccountId = process.env.R2_ACCOUNT_ID || '';
+    this.r2BucketName = process.env.R2_BUCKET_NAME || '';
+    this.r2AccessKeyId = process.env.R2_ACCESS_KEY_ID || '';
+    this.r2SecretAccessKey = process.env.R2_SECRET_ACCESS_KEY || '';
+    this.r2PublicUrl = process.env.R2_PUBLIC_URL || `https://${this.r2BucketName}.${this.r2AccountId}.r2.cloudflarestorage.com`;
+  }
 
   get nodeEnv(): string {
     return this.configService.get<string>('NODE_ENV') || 'development';
@@ -63,7 +106,6 @@ export class EnvironmentConfig {
     if (this.isProduction) {
       return [
         'https://weeklyreport-orpin.vercel.app',
-        'https://weeklyreportsystem-mu.vercel.app',
       ];
     } else {
       return ['http://localhost:3000', 'http://127.0.0.1:3000'];
@@ -221,5 +263,24 @@ export class EnvironmentConfig {
         database: 'unknown',
       };
     }
+  }
+
+  // Firebase validation
+  get isFirebaseConfigured(): boolean {
+    return !!(
+      this.firebaseProjectId && 
+      this.firebaseStorageBucket && 
+      (this.firebaseServiceAccount || (this.firebasePrivateKey && this.firebaseClientEmail))
+    );
+  }
+
+  // R2 validation
+  get isR2Configured(): boolean {
+    return !!(
+      this.r2AccountId && 
+      this.r2BucketName && 
+      this.r2AccessKeyId && 
+      this.r2SecretAccessKey
+    );
   }
 }

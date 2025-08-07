@@ -496,16 +496,6 @@ export class AuthService {
 
     response.cookie('access_token', token, cookieOptions);
     
-    // For iOS Safari in production, set additional fallback cookie
-    if (isIOSSafari && isProduction) {
-      response.cookie('ios_auth_token', token, {
-        httpOnly: false, // Allow JS access as fallback
-        secure: true,
-        sameSite: 'lax',
-        maxAge,
-        path: '/',
-      });
-    }
   }
 
   private clearAuthCookie(response: Response, isIOSSafari = false) {

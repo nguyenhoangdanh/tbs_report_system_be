@@ -8,6 +8,11 @@ import {
   HttpStatus,
   Param,
   Query,
+  Post,
+  Delete,
+  UploadedFile,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -16,14 +21,23 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { getCurrentWorkWeek } from '../common/utils/week-utils';
-
+interface UploadedFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
 @ApiTags('users')
 @Controller('users')
 @UseGuards(JwtAuthGuard)
+@ApiBearerAuth('JWT-auth')
 export class UsersController {
-  constructor(private usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) {}
 
   @Get('profile')
   @ApiOperation({ summary: 'Get current user profile' })
@@ -137,5 +151,56 @@ export class UsersController {
     }
 
     return this.usersService.getUsersWithRankingData(filters);
+  }
+
+  @Post('avatar')
+  @ApiOperation({ summary: 'Upload user avatar' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Avatar image file',
+    type: 'multipart/form-data',
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Image file (JPEG, PNG, WEBP, max 5MB)',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Avatar uploaded successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid file or file too large' })
+  @UseInterceptors(FileInterceptor('file', {
+    limits: {
+      fileSize: 5 * 1024 * 1024, // 5MB limit
+    },
+    fileFilter: (req, file, callback) => {
+      const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+      if (allowedMimeTypes.includes(file.mimetype)) {
+        callback(null, true);
+      } else {
+        callback(new BadRequestException('Only JPEG, PNG, and WEBP images are allowed'), false);
+      }
+    },
+  }))
+  async uploadAvatar(
+    @GetUser() user: any,
+    @UploadedFile() file: UploadedFile,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    return this.usersService.uploadAvatar(user.id, file);
+  }
+
+  @Delete('avatar')
+  @ApiOperation({ summary: 'Delete user avatar' })
+  @ApiResponse({ status: 200, description: 'Avatar deleted successfully' })
+  @ApiResponse({ status: 404, description: 'User not found or no avatar to delete' })
+  async deleteAvatar(@GetUser() user: any) {
+    return this.usersService.deleteAvatar(user.id);
   }
 }

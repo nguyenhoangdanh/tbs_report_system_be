@@ -92,6 +92,7 @@ model User {
   firstName     String
   lastName      String
   phone         String?   
+  avatar        String?   // Firebase Storage URL for user avatar
   role          Role      @default(USER)
   jobPositionId String
   isActive      Boolean   @default(false)

@@ -1,16 +1,34 @@
 import {
   Injectable,
   NotFoundException,
-  BadRequestException,
   ForbiddenException,
+  BadRequestException,
+  Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
+import { CloudflareR2Service } from '../common/r2.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { Role } from '@prisma/client';
 
+// Define interface for uploaded file
+interface UploadedFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(UsersService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private r2Service: CloudflareR2Service, // Replace FirebaseService
+  ) {}
 
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -384,5 +402,132 @@ export class UsersService {
       // 'FAIL': 'Kém'
     };
     return labels[ranking] || 'Chưa xếp loại';
+  }
+
+  async uploadAvatar(userId: string, file: UploadedFile) {
+    try {
+      // Validate file
+      if (!this.r2Service.isValidImageFile(file)) {
+        throw new BadRequestException('Invalid image file. Only JPEG, PNG, WEBP files under 5MB are allowed.');
+      }
+
+      // Get current user
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { 
+          id: true, 
+          employeeCode: true, 
+          avatar: true, 
+          firstName: true, 
+          lastName: true 
+        },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Delete old avatar if exists
+      if (user.avatar) {
+        await this.r2Service.deleteAvatar(user.avatar);
+      }
+
+      // Upload new avatar to R2
+      const avatarUrl = await this.r2Service.uploadAvatar(
+        file,
+        user.id,
+        user.employeeCode
+      );
+
+      // Update user record
+      const updatedUser = await this.prisma.user.update({
+        where: { id: userId },
+        data: { avatar: avatarUrl },
+        select: {
+          id: true,
+          employeeCode: true,
+          firstName: true,
+          lastName: true,
+          avatar: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      this.logger.log(`Avatar uploaded successfully for user ${userId}`);
+
+      return {
+        message: 'Avatar uploaded successfully',
+        user: {
+          ...updatedUser,
+          createdAt: updatedUser.createdAt.toISOString(),
+          updatedAt: updatedUser.updatedAt.toISOString(),
+        },
+        avatarUrl,
+      };
+    } catch (error) {
+      this.logger.error(`Avatar upload failed for user ${userId}:`, error);
+      
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Failed to upload avatar');
+    }
+  }
+
+  async deleteAvatar(userId: string) {
+    try {
+      // Get current user
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, avatar: true, firstName: true, lastName: true },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      if (!user.avatar) {
+        throw new BadRequestException('User has no avatar to delete');
+      }
+
+      // Delete from R2
+      await this.r2Service.deleteAvatar(user.avatar);
+
+      // Update user record
+      const updatedUser = await this.prisma.user.update({
+        where: { id: userId },
+        data: { avatar: null },
+        select: {
+          id: true,
+          employeeCode: true,
+          firstName: true,
+          lastName: true,
+          avatar: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      this.logger.log(`Avatar deleted successfully for user ${userId}`);
+
+      return {
+        message: 'Avatar deleted successfully',
+        user: {
+          ...updatedUser,
+          createdAt: updatedUser.createdAt.toISOString(),
+          updatedAt: updatedUser.updatedAt.toISOString(),
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Avatar deletion failed for user ${userId}:`, error);
+      
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Failed to delete avatar');
+    }
   }
 }
