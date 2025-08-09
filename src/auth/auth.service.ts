@@ -281,12 +281,23 @@ export class AuthService {
         secret: this.envConfig.jwtSecret,
       });
 
-      // Set cookie with enhanced iOS handling
+      // Generate refresh token for token mode
+      const refresh_token = this.jwtService.sign(
+        { ...payload, type: 'refresh' }, 
+        {
+          expiresIn: '30d',
+          secret: this.envConfig.jwtSecret,
+        }
+      );
+
+      // Set cookie only if response object provided (cookie mode)
       if (response) {
         this.setAuthCookie(response, access_token, rememberMe, deviceInfo);
+        // Also set refresh token cookie
+        this.setRefreshCookie(response, refresh_token, rememberMe);
       }
 
-      // Return user data with iOS-specific data
+      // Return user data
       const { password: _, ...userWithoutPassword } = user;
       const userResponse = {
         ...userWithoutPassword,
@@ -295,23 +306,28 @@ export class AuthService {
         updatedAt: userWithoutPassword.updatedAt.toISOString(),
       };
 
-      // For iOS devices, also set token in response headers as fallback
-      if (deviceInfo.isIOSSafari && response) {
-        response.setHeader('X-Access-Token', access_token);
-        response.setHeader('X-iOS-Fallback', 'true');
-        response.setHeader('X-iOS-Version', deviceInfo.version || 'unknown');
-      }
-
-      return {
+      // Enhanced response for different auth modes
+      const baseResponse: AuthResponseDto = {
         access_token,
+        refresh_token, // ✅ Always include refresh_token
         user: userResponse,
         message: 'Đăng nhập thành công',
-        ...(deviceInfo.isIOSSafari && { 
-          iosDetected: true, 
-          fallbackToken: access_token,
-          deviceInfo: deviceInfo
-        })
       };
+
+      // Add iOS-specific fields if applicable
+      if (deviceInfo.isIOSSafari) {
+        return {
+          ...baseResponse,
+          iosDetected: true,
+          fallbackToken: access_token,
+          deviceInfo: deviceInfo,
+          // For token mode (iOS/Mac)
+          accessToken: access_token,
+          refreshToken: refresh_token,
+        };
+      }
+
+      return baseResponse;
 
     } catch (error) {
       this.logger.error(`Login error for ${employeeCode}:`, error.message);
@@ -389,18 +405,28 @@ export class AuthService {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    // Generate new token
+    // Generate new tokens
     const payload = { sub: user.id, employeeCode: user.employeeCode, role: user.role };
     const access_token = this.jwtService.sign(payload, {
       expiresIn: rememberMe ? '30d' : '7d'
     });
 
+    const refresh_token = this.jwtService.sign(
+      { ...payload, type: 'refresh' }, 
+      {
+        expiresIn: '30d',
+        secret: this.envConfig.jwtSecret,
+      }
+    );
+
     // Update cookie with iOS handling
     this.setAuthCookie(response, access_token, rememberMe, deviceInfo);
+    this.setRefreshCookie(response, refresh_token, rememberMe);
 
     // For iOS devices, also set token in response header
     if (deviceInfo.isIOSSafari) {
       response.setHeader('X-Access-Token', access_token);
+      response.setHeader('X-Refresh-Token', refresh_token);
       response.setHeader('X-iOS-Fallback', 'true');
     }
 
@@ -411,16 +437,25 @@ export class AuthService {
       updatedAt: userWithoutPassword.updatedAt.toISOString(),
     };
 
-    return {
+    const baseResponse: AuthResponseDto = {
       access_token,
+      refresh_token, // ✅ Always include refresh_token
       user: userResponse,
       message: 'Token refreshed successfully',
-      ...(deviceInfo.isIOSSafari && { 
-        iosDetected: true, 
-        fallbackToken: access_token,
-        deviceInfo: deviceInfo 
-      })
     };
+
+    if (deviceInfo.isIOSSafari) {
+      return {
+        ...baseResponse,
+        iosDetected: true,
+        fallbackToken: access_token,
+        deviceInfo: deviceInfo,
+        accessToken: access_token,
+        refreshToken: refresh_token,
+      };
+    }
+
+    return baseResponse;
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
@@ -539,40 +574,61 @@ export class AuthService {
     }
   }
 
-  private clearAuthCookie(response: Response, deviceInfo?: any) {
+  private setRefreshCookie(response: Response, refreshToken: string, rememberMe = false) {
+    const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days for refresh token
     const isProduction = this.envConfig.isProduction;
-    
-    // ✅ CRITICAL FIX: Use EXACT same options as set
+
     const cookieOptions = {
       httpOnly: true,
-      secure: isProduction, // ✅ MUST match set options
-      sameSite: isProduction ? 'none' as const : 'lax' as const, // ✅ CRITICAL: Must match
+      secure: isProduction,
+      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      maxAge,
       path: '/',
     };
 
-    this.logger.log('Clearing auth cookie (production-fixed):', cookieOptions);
-
-    // ✅ Clear with exact matching options
-    response.clearCookie('access_token', cookieOptions);
+    response.cookie('refresh_token', refreshToken, cookieOptions);
     
-    // ✅ Additional clearing methods for production
+    this.logger.log('Setting refresh cookie:', {
+      tokenLength: refreshToken.length,
+      maxAge,
+      isProduction,
+    });
+  }
+
+  private clearAuthCookie(response: Response, deviceInfo?: any) {
+    const isProduction = this.envConfig.isProduction;
+    
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' as const : 'lax' as const,
+      path: '/',
+    };
+
+    this.logger.log('Clearing auth cookies:', cookieOptions);
+
+    // Clear both access and refresh token cookies
+    response.clearCookie('access_token', cookieOptions);
+    response.clearCookie('refresh_token', cookieOptions);
+    
+    // Additional clearing methods
     if (isProduction) {
-      // Method 1: Clear with just path
       response.clearCookie('access_token', { path: '/' });
-      
-      // Method 2: Clear with no options
+      response.clearCookie('refresh_token', { path: '/' });
       response.clearCookie('access_token');
+      response.clearCookie('refresh_token');
       
-      // Method 3: Set expired cookie as final fallback
+      // Set expired cookies
       response.cookie('access_token', '', {
         ...cookieOptions,
         expires: new Date(0),
         maxAge: 0
       });
-    } else {
-      // Development clearing
-      response.clearCookie('access_token', { path: '/' });
-      response.clearCookie('access_token');
+      response.cookie('refresh_token', '', {
+        ...cookieOptions,
+        expires: new Date(0),
+        maxAge: 0
+      });
     }
   }
 }

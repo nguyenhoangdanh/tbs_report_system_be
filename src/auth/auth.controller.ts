@@ -8,6 +8,8 @@ import {
   Patch,
   Req,
   Logger,
+  UnauthorizedException,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,6 +19,8 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { Response } from 'express';
+import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../common/prisma.service';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -31,9 +35,13 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-   private readonly logger = new Logger(AuthController.name);
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
-    private readonly authService: AuthService) { }
+    private readonly authService: AuthService,
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Post('register')
   @Public()
@@ -45,30 +53,53 @@ export class AuthController {
 
   @Post('login')
   @Public()
-  @ApiOperation({ summary: 'Login user' })
-  @ApiResponse({
-    status: 200,
-    description: 'User logged in successfully',
-    type: AuthResponseDto,
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Invalid input data',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Invalid credentials',
-  })
+  @ApiOperation({ summary: 'Login user with dual auth support' })
+  @ApiQuery({ name: 'mode', required: false, description: 'Auth mode: token for iOS/Mac, cookie for others' })
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) response: Response,
     @Req() request: any,
+    @Query('mode') mode?: string, // ✅ Move optional parameter to the end
   ): Promise<AuthResponseDto> {
     try {
-      return await this.authService.login(loginDto, response, loginDto.rememberMe || false, request);
+      // Detect auth mode
+      const authMode = mode || request.headers['x-auth-mode']
+      const isTokenMode = authMode === 'token'
+      
+      // Enhanced device detection
+      const userAgent = request?.headers['user-agent'] || ''
+      const isIOSOrMac = /iPad|iPhone|iPod|Macintosh/i.test(userAgent)
+      
+      this.logger.log('Login request:', {
+        authMode: isTokenMode ? 'token' : 'cookie',
+        isIOSOrMac,
+        userAgent: userAgent.substring(0, 50)
+      })
+
+      const result = await this.authService.login(
+        loginDto, 
+        isTokenMode ? null : response, // Don't pass response for token mode
+        loginDto.rememberMe || false, 
+        request
+      )
+
+      // Token mode: Return tokens in response body and headers
+      if (isTokenMode) {
+        response.setHeader('X-Access-Token', result.access_token)
+        response.setHeader('X-Refresh-Token', result.refresh_token || result.access_token)
+        
+        return {
+          ...result,
+          accessToken: result.access_token,
+          refreshToken: result.refresh_token || result.access_token,
+        }
+      }
+
+      // Cookie mode: Tokens are set in cookies by service
+      return result
     } catch (error) {
-      console.error('Login controller error:', error);
-      throw error;
+      console.error('Login controller error:', error)
+      throw error
     }
   }
 
@@ -101,26 +132,86 @@ export class AuthController {
   }
 
   @Post('refresh')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Refresh access token' })
-  @ApiResponse({
-    status: 200,
-    description: 'Token refreshed successfully',
-    type: AuthResponseDto,
-  })
-  refreshToken(
+  @Public() // Allow unauthenticated refresh attempts
+  @ApiOperation({ summary: 'Refresh access token with dual auth support' })
+  async refreshToken(
+    @Req() request: any,
+    @Res({ passthrough: true }) response: Response,
+    @Body() body: { refreshToken?: string } = {}, // ✅ Provide default value
+  ): Promise<AuthResponseDto> {
+    try {
+      const authMode = request.headers['x-auth-mode']
+      const isTokenMode = authMode === 'token'
+      
+      if (isTokenMode) {
+        // Token mode: Get refresh token from body
+        if (!body.refreshToken) {
+          throw new BadRequestException('Refresh token required')
+        }
+        
+        // Validate refresh token and get user
+        const payload = this.jwtService.verify(body.refreshToken)
+        const user = await this.prisma.user.findUnique({
+          where: { id: payload.sub },
+          include: {
+            office: true,
+            jobPosition: {
+              include: {
+                position: true,
+                department: true,
+              },
+            },
+          },
+        })
+
+        if (!user || !user.isActive) {
+          throw new UnauthorizedException('Invalid refresh token')
+        }
+
+        // Generate new tokens
+        const newPayload = { sub: user.id, employeeCode: user.employeeCode, role: user.role }
+        const accessToken = this.jwtService.sign(newPayload, { expiresIn: '7d' })
+        const refreshToken = this.jwtService.sign({ ...newPayload, type: 'refresh' }, { expiresIn: '30d' })
+
+        // Set headers for token mode
+        response.setHeader('X-Access-Token', accessToken)
+        response.setHeader('X-Refresh-Token', refreshToken)
+
+        const { password: _, ...userWithoutPassword } = user
+        return {
+          access_token: accessToken,
+          refresh_token: refreshToken, // ✅ Include refresh_token
+          accessToken, // For iOS/Mac compatibility
+          refreshToken,
+          user: userWithoutPassword,
+          message: 'Token refreshed successfully'
+        }
+      } else {
+        // Cookie mode: Use existing refresh logic with JWT guard
+        throw new UnauthorizedException('Cookie-based refresh should use authenticated endpoint')
+      }
+    } catch (error) {
+      console.error('Refresh token error:', error)
+      throw error
+    }
+  }
+
+  @Post('refresh-cookie')
+  @UseGuards(JwtAuthGuard) // This will read from cookie
+  @ApiOperation({ summary: 'Refresh access token using cookie' })
+  async refreshTokenCookie(
     @GetUser() user: any,
     @Res({ passthrough: true }) response: Response,
     @Req() request: any,
-    @Body('rememberMe') rememberMe?: boolean,
+    @Body('rememberMe') rememberMe: boolean = false, // ✅ Provide default value
   ): Promise<AuthResponseDto> {
+    // Use existing refresh logic for cookie mode
     return this.authService.refreshToken(
       user.id,
       response,
-      rememberMe || false,
+      rememberMe,
       request,
-    );
+    )
   }
 
   @Post('forgot-password')

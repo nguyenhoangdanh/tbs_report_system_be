@@ -13,41 +13,29 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private prisma: PrismaService,
     private envConfig: EnvironmentConfig,
   ) {
-
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
-        // ✅ SIMPLE: Only check access_token cookie
+        // Priority 1: Authorization header (for iOS/Mac token mode)
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+        
+        // Priority 2: Cookie (for standard web browsers)
         (request: Request) => {
           const cookies = request?.cookies || {};
           const token = cookies['access_token'];
 
-          // Enhanced debug logging for production debugging
+          // Enhanced debug logging
           if (this.envConfig.isProduction) {
             const userAgent = request?.headers?.['user-agent'] || '';
-            const isIOS = /iPad|iPhone|iPod|Mac.*OS.*X/i.test(userAgent);
+            const authMode = request?.headers?.['x-auth-mode'] || 'cookie';
+            const isIOSOrMac = /iPad|iPhone|iPod|Macintosh/i.test(userAgent);
             
             this.logger.log('JWT Extraction Debug:', {
-              hasCookies: !!cookies,
-              cookieKeys: cookies ? Object.keys(cookies) : [],
-              cookieCount: cookies ? Object.keys(cookies).length : 0,
-              
-              hasAccessToken: !!token,
-              tokenLength: token ? token.length : 0,
-              
-              isIOSDevice: isIOS,
+              authMode,
+              isIOSOrMac,
+              hasAuthHeader: !!request?.headers?.authorization,
+              hasCookieToken: !!token,
+              tokenSource: request?.headers?.authorization ? 'header' : (token ? 'cookie' : 'none'),
               userAgent: userAgent?.substring(0, 50),
-              origin: request?.headers?.origin,
-              referer: request?.headers?.referer,
-              
-              // Raw cookie header inspection
-              cookieHeader: request?.headers?.cookie || 'undefined',
-              cookieHeaderLength: request?.headers?.cookie?.length || 0,
-              
-              // Additional debugging
-              isSafari: /Safari/i.test(userAgent) && !/Chrome|CriOS/i.test(userAgent),
-              isSimulator: userAgent.includes('Simulator'),
-              
-              // Request info
               method: request?.method,
               path: request?.url,
             });
@@ -56,10 +44,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           return token;
         },
         
-        // ✅ Fallback to Authorization header
-        ExtractJwt.fromAuthHeaderAsBearerToken(),
-        
-        // ✅ iOS fallback: Check custom header
+        // Priority 3: Custom header fallback
         (request: Request) => {
           return request?.headers?.['x-access-token'] as string;
         }

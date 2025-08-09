@@ -49,9 +49,28 @@ export class AuthResponseDto {
   @ApiProperty()
   access_token: string;
 
+  @ApiProperty({ required: false, description: 'Refresh token (optional for cookie mode)' })
+  refresh_token?: string;
+
   @ApiProperty({ type: UserResponseDto })
   user: any;
 
   @ApiProperty()
   message: string;
+
+  // iOS/Mac specific fields
+  @ApiProperty({ required: false, description: 'Access token for iOS/Mac token mode' })
+  accessToken?: string;
+
+  @ApiProperty({ required: false, description: 'Refresh token for iOS/Mac token mode' })
+  refreshToken?: string;
+
+  @ApiProperty({ required: false, description: 'iOS device detected flag' })
+  iosDetected?: boolean;
+
+  @ApiProperty({ required: false, description: 'Fallback token for iOS' })
+  fallbackToken?: string;
+
+  @ApiProperty({ required: false, description: 'Device information' })
+  deviceInfo?: any;
 }
